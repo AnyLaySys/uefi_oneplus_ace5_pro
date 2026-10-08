@@ -1,0 +1,37 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = HummerDeviceBootManagerLib
+  FILE_GUID = 02C8A3D4-FA75-4D90-B62D-112CF08F9D0D
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = DeviceBootManagerLib|DXE_DRIVER
+
+[Sources]
+  DeviceBootManager.c
+
+[Packages]
+  hummerPkg/hummer.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MsCorePkg/MsCorePkg.dec
+  QcomPkg/QcomPkg.dec
+
+[LibraryClasses]
+  PcdLib
+  DebugLib
+  DevicePathLib
+  MemoryAllocationLib
+  RfsProtectionLib
+  UefiBootServicesTableLib
+  UefiLib
+
+[Guids]
+  gUsbControllerInitGuid
+  gSdCardInitGuid
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+  gEfiDevicePathProtocolGuid
+
+[FixedPcd]
+  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery

@@ -1,0 +1,14 @@
+[Defines]
+  DEC_SPECIFICATION = 0x00010005
+  PACKAGE_NAME = hummerPkg
+  PACKAGE_GUID = 2BA4D4C5-8A7B-4C3D-9E1F-0F6A4B8C27D1
+  PACKAGE_VERSION = 0.1
+
+[Includes]
+  Include
+
+[Guids]
+  gHummerPkgTokenSpaceGuid = { 0x5799D220, 0xB951, 0x4D49, { 0xA8, 0xF4, 0x95, 0x28, 0x27, 0xBD, 0x44, 0x70 } }
+
+[PcdsFixedAtBuild]
+  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery|FALSE|BOOLEAN|0x00001000

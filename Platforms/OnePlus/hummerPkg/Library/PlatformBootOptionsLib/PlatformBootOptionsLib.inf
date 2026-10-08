@@ -1,0 +1,24 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = HummerPlatformBootOptionsLib
+  FILE_GUID = 385C64AC-D8AF-4DA2-A508-E637A2DAD391
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = PlatformBootOptionsLib|DXE_DRIVER
+
+[Sources]
+  PlatformBootOptions.c
+
+[Packages]
+  hummerPkg/hummer.dec
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+  QcomPkg/QcomPkg.dec
+
+[LibraryClasses]
+  MemoryAllocationLib
+  PcdLib
+
+[FixedPcd]
+  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery
+  gQcomPkgTokenSpaceGuid.PcdMassStorageFile

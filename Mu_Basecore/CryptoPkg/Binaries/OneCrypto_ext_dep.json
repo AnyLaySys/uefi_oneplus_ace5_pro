@@ -1,0 +1,15 @@
+{
+  "scope": "global",
+  "type": "web",
+  "id": "onecrypto-bin",
+  "name": "onecrypto-bin",
+  "source": "https://github.com/microsoft/mu_crypto_release/releases/download/v1.1.0-OneCrypto/OneCrypto-Accelerated.zip",
+  "version": "1.1.0",
+  "sha256": "e18de6ed1019bdb9dd156d1a218af1534592291e76b376377a7b4c8fa5a95470",
+  "compression_type": "zip",
+  "internal_path": "/",
+  "flags": [
+    "set_build_var"
+  ],
+  "var_name": "BLD_*_ONE_CRYPTO_PATH"
+}

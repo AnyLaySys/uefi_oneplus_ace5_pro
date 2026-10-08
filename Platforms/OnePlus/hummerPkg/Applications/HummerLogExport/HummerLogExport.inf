@@ -1,0 +1,31 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = HummerLogExport
+  FILE_GUID = A491D18E-8267-4AF4-9971-E4D1FD830731
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = HummerLogExportEntry
+
+[Sources]
+  HummerLogExport.c
+  LogDisk.h
+
+[Packages]
+  MdePkg/MdePkg.dec
+  QcomPkg/QcomPkg.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  MemoryAllocationLib
+  PrintLib
+  SerialPortLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+
+[Guids]
+  gUsbControllerInitGuid
+
+[Protocols]
+  gEfiUsbMsdProtocolGuid
+  gEfiBlockIoProtocolGuid

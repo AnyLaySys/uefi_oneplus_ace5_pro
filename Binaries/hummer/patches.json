@@ -1,0 +1,205 @@
+{
+  "reference": "pagani binaries at a1501e0c2e642d6ac0d8f52c85af2a67b75a7799",
+  "firmware": "PKR110_16.0.0.204(CN01)",
+  "patches": [
+    {
+      "file": "QcomPkg/Drivers/ButtonsDxe/ButtonsDxe.efi",
+      "source_sha256": "4fb9f6e60236cd47aa205479ff0d8afd38e3664d4c46ba17c84be84fa95d8e44",
+      "patched_sha256": "187e1ea4cd3198ca17d165a233f856db80356466922ec6f358bd23770ce15823",
+      "edits": [
+        {
+          "offset": "0x36b8",
+          "before": "48208052d6ffff17",
+          "after": "a8018052edffff17",
+          "reason": "Map power key to Enter; same text section as pagani"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/ClockDxe/ClockDxe.efi",
+      "source_sha256": "cd405761bce705dc794cb1664c9ca778128a34f7a908a47bd94d94d454d557a4",
+      "patched_sha256": "1802115ceee679deaa69ac4879a102ae9390da318393479dc5f155d3cc6815a1",
+      "edits": [
+        {
+          "offset": "0xc6b0",
+          "before": "79ffff97",
+          "after": "e0031f2a",
+          "reason": "Preserve display CESTA dependencies; same text section as pagani"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/SPMIDxe/SPMIDxe.efi",
+      "source_sha256": "bae90e6ef43267e505da605985e6745b079a51acaa4ebcdbd16f4435eaaab94d",
+      "patched_sha256": "718ef88af427a8f931c8bbe1bd75f2e323e45c3669df91cf25552ae140c18fa8",
+      "edits": [
+        {
+          "offset": "0x2da8",
+          "before": "fd7bbda9f65701a9",
+          "after": "e0031f2ac0035fd6",
+          "reason": "Skip second SPMI PIC initialization; same text section as pagani"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/TzDxe/TzDxeLA.efi",
+      "source_sha256": "d24462dff8a41c00f93894b6fed8d67cac717e3c30c40963683af8b630ff1af2",
+      "patched_sha256": "eeb415698bd4e6774d0b7ae831c35f849e68d132b8fe4cbeeb5850cbc4b55fd6",
+      "edits": [
+        {
+          "offset": "0xf5b0",
+          "before": "00000000",
+          "after": "01000000",
+          "reason": "Set TZ applet initialized flag; original binary identical to pagani"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/PmicDxe/PmicDxeLa.efi",
+      "source_sha256": "82658ef4547d42eee92b111b7f7642ec03cfef79df163956cf1bdab5ba3dda07",
+      "patched_sha256": "280eacd3630bc47c65231cc8c7506d1bcf7e54931501ca062bc44526d1eebe5d",
+      "edits": [
+        {
+          "offset": "0x41b4",
+          "before": "5c5b0094",
+          "after": "1f2003d5",
+          "reason": "Skip repeated PMIC initialization call; pagani 0x41b4"
+        },
+        {
+          "offset": "0x41bc",
+          "before": "a7540094",
+          "after": "1f2003d5",
+          "reason": "Skip repeated PMIC initialization call; pagani 0x41bc"
+        },
+        {
+          "offset": "0x91f4",
+          "before": "fd7bbea9f30b00f9",
+          "after": "e0031f2ac0035fd6",
+          "reason": "Skip battery presence function; relocated from pagani 0x94bc"
+        },
+        {
+          "offset": "0x1a89c",
+          "before": "ffc300d1fd7b01a9",
+          "after": "e0031f2ac0035fd6",
+          "reason": "Skip OEM battery function; relocated from pagani 0x1acfc"
+        },
+        {
+          "offset": "0x25fb0",
+          "before": "b2a9ff97",
+          "after": "e0031f2a",
+          "reason": "Skip redundant SPMI handling; relocated from pagani 0x26410"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/UFSDxe/UFSDxe.efi",
+      "source_sha256": "e142fe0ae1006ec2cb0bfa5e6d0172ed8ecf0ad9eb767cabb6c60560bc456c4d",
+      "patched_sha256": "a72d31b2c1e2888227036dee53b4ea4c75fcc2d2349c880ad6317cc14820c120",
+      "edits": [
+        {
+          "offset": "0xe5e",
+          "before": "0300",
+          "after": "0400",
+          "reason": "Add executable .extra section"
+        },
+        {
+          "offset": "0xea8",
+          "before": "00500200",
+          "after": "00600200",
+          "reason": "Account for added code page"
+        },
+        {
+          "offset": "0xe74",
+          "before": "00f00100",
+          "after": "00000200",
+          "reason": "Include added code in PE code size"
+        },
+        {
+          "offset": "0xfd8",
+          "before": "00000000000000000000000000000000000000000000000000000000000000000000000000000000",
+          "after": "2e657874726100000010000000500200001000000050020000000000000000000000000020000060",
+          "reason": "Executable/read-only, position-independent wakeup trampolines"
+        },
+        {
+          "offset": "0xa998",
+          "before": "83050094",
+          "after": "a2690094",
+          "reason": "Replace sleep with wakeup; preserve original CBNZ error check at 0xA99C"
+        },
+        {
+          "offset": "0x106e8",
+          "before": "08a45239",
+          "after": "08008052",
+          "reason": "Force hardware Hibern8 transition instead of trusting cached initialized flag"
+        },
+        {
+          "offset": "0x1191c",
+          "before": "5afeff97",
+          "after": "b94d0014",
+          "reason": "Wake link before original gear check"
+        }
+      ],
+      "append": {
+        "size": 4096,
+        "data": "e1031f2ab3adff9760000035e00313aa9db0ff9743b2ff171f2003d51f2003d5210080522b9cff17"
+      },
+      "note": "Derived from pagani wakeup fix. Preserve original error checks and use explicit Hibern8 exit mode; both trampoline outcomes rejoin native control flow."
+    },
+    {
+      "file": "QcomPkg/Drivers/UsbConfigDxe/UsbConfigDxe.efi",
+      "source_sha256": "fd75d1af1a42a47672684cc2ded355c4db139b0d55fec13bd9c990d20c801c1a",
+      "patched_sha256": "6a8cd649c1ed4dfc4e58e0b8f20722356c87f3d269a834d89bf5f54ed619fd58",
+      "edits": [
+        {
+          "offset": "0x4bb0",
+          "before": "28010034",
+          "after": "09000014"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/UsbMsdDxe/UsbMsdDxe.efi",
+      "source_sha256": "541f320d619038ae0f72e19a13e1c2be30e0f31d2411dc6b57b08df0ceea6968",
+      "patched_sha256": "6320fe2e367256bebbf05e1ef79dac5a79d757e41b2f49c7eab95e14d8675838",
+      "edits": [
+        {
+          "offset": "0x403c",
+          "before": "08108052",
+          "after": "08008052"
+        }
+      ]
+    },
+    {
+      "file": "QcomPkg/Drivers/QcomChargerDxe/QcomChargerDxeLA.efi",
+      "source_sha256": "eea465f2c9d7b120a41e56ef3fca848e22b53945924cc12b36a7ede9506456a3",
+      "patched_sha256": "87eb065aa5b7eef9df6cab51968145578c36dde7df4f0b99bc6da530b950cec1",
+      "edits": [
+        {
+          "offset": "0x6190",
+          "before": "20013fd6",
+          "after": "1f2003d5"
+        },
+        {
+          "offset": "0xd004",
+          "before": "00013fd6",
+          "after": "1f2003d5"
+        },
+        {
+          "offset": "0xd028",
+          "before": "00013fd6",
+          "after": "1f2003d5"
+        },
+        {
+          "offset": "0xd04c",
+          "before": "00013fd6",
+          "after": "1f2003d5"
+        },
+        {
+          "offset": "0xfd88",
+          "before": "fd7bbea9f44f01a9",
+          "after": "e0031f2ac0035fd6"
+        }
+      ]
+    }
+  ]
+}

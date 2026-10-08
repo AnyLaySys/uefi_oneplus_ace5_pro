@@ -1,0 +1,43 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = HummerCpuExceptionHandlerLib
+  FILE_GUID = F624475C-CDEC-4BE2-8A2A-A852B9892032
+  MODULE_TYPE = DXE_DRIVER
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = CpuExceptionHandlerLib|DXE_DRIVER
+
+[Sources.AARCH64]
+  CpuExceptionHandler.c
+  CpuExceptionHelpers.c
+  ../../../../../Mu_Basecore/UefiCpuPkg/Library/CpuExceptionHandlerLib/AArch64/ExceptionSupport.S | GCC
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  UefiCpuPkg/UefiCpuPkg.dec
+  ArmPkg/ArmPkg.dec
+  ArmPlatformPkg/ArmPlatformPkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+
+[LibraryClasses]
+  ArmLib
+  BaseLib
+  BaseMemoryLib
+  CacheMaintenanceLib
+  DebugLib
+  MemoryAllocationLib
+  MemoryMapHelperLib
+  PeCoffGetEntryPointLib
+  PrintLib
+  SerialPortLib
+  SynchronizationLib
+  UefiLib
+
+[Guids]
+  gEfiDebugImageInfoTableGuid
+
+[FixedPcd]
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
+  gSiliciumPkgTokenSpaceGuid.PcdFrameBufferHeight
+  gArmPlatformTokenSpaceGuid.PcdCPUCoresStackBase
+  gArmPlatformTokenSpaceGuid.PcdCPUCorePrimaryStackSize
