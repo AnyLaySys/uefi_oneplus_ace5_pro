@@ -15,8 +15,12 @@ The output is `Mu-hummer.img`. Use the matching device firmware in
 
 ## Boot options
 
-- Mass Storage exposes the UFS Block I/O devices through the firmware USB
-  mass-storage protocol. The standard console shows LUN mappings and errors.
+- Mass Storage exposes only the physical UFS LU0 disk through the firmware
+  USB mass-storage protocol, using USB LUN 0. It contains userdata and any
+  Ubuntu partition created there. Other UFS LUNs are not exported. The
+  standard console shows the disk capacity and errors. USB initialization
+  uses the boot manager's console connection path, as on dodge; the
+  application does not signal controller initialization a second time.
 - Linux Test starts an EFI Linux Image with its OS DT and external initrd
   supplied in the BootShim-tail payload. It keeps payload validation,
   memory reservations and restoration of the previous DT on return.
@@ -31,6 +35,9 @@ and firmware exception diagnostics remain available.
 `HUMMER_LOG_RECOVERY=TRUE` selects the dedicated recovery profile. The Linux
 launcher preserves the M4/M6/M7 command-line policies, including
 `efi=noruntime`, `retain_initrd` and the M6/M7 UFS read-only parameters.
+The `M7-RW-` build ID prefix requests writable UFS by setting both
+`hummer_read_only` parameters to zero, while keeping MCQ disabled.
+Other M6/M7 payloads retain their previous read-only policy.
 USB reset and recovery behavior after Linux still require hardware testing;
 a successful firmware build does not establish reset reliability.
 

@@ -1,5 +1,4 @@
 #include <Uefi.h>
-#include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DevicePathLib.h>
 #include <Library/MemoryAllocationLib.h>
@@ -9,14 +8,6 @@
 #include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/EFIUsbMsd.h>
-
-STATIC EFI_USB_MSD_PROTOCOL *mUsbMsd;
-STATIC UINT8 mAssignedLuns;
-
-STATIC EFI_GUID *mUfsGuids[] = {
-  &gEfiUfsLU0Guid, &gEfiUfsLU1Guid, &gEfiUfsLU2Guid, &gEfiUfsLU3Guid,
-  &gEfiUfsLU4Guid, &gEfiUfsLU5Guid, &gEfiUfsLU6Guid, &gEfiUfsLU7Guid
-};
 
 STATIC VOID
 AddLine (IN CONST CHAR8 *Format, ...)
@@ -64,87 +55,46 @@ WaitForExit (VOID)
   }
 }
 
-STATIC VOID EFIAPI
-DummyNotify (IN EFI_EVENT Event, IN VOID *Context)
-{
-}
-
-STATIC VOID
-InitializeUsb (VOID)
-{
-  EFI_STATUS Status;
-  EFI_EVENT InitEvent;
-
-  Status = gBS->CreateEventEx (
-    EVT_NOTIFY_SIGNAL, TPL_CALLBACK, DummyNotify, NULL,
-    &gUsbControllerInitGuid, &InitEvent);
-  if (!EFI_ERROR (Status)) {
-    Status = gBS->SignalEvent (InitEvent);
-    gBS->CloseEvent (InitEvent);
-  }
-  if (EFI_ERROR (Status)) {
-    AddLine ("USB initialization failed: %r", Status);
-  }
-}
-
-STATIC INTN
-GetUfsLun (IN EFI_HANDLE Handle)
+STATIC BOOLEAN
+IsUfsLun0 (IN EFI_HANDLE Handle)
 {
   EFI_DEVICE_PATH_PROTOCOL *Path;
   EFI_STATUS Status;
-  UINTN Lun;
 
   Status = gBS->HandleProtocol (
     Handle, &gEfiDevicePathProtocolGuid, (VOID **)&Path);
-  if (EFI_ERROR (Status) || (Path == NULL) ||
-      !IsDevicePathValid (Path, SIZE_4KB)) {
-    return -1;
+  if (EFI_ERROR (Status) || !IsDevicePathValid (Path, SIZE_4KB)) {
+    return FALSE;
   }
   while (!IsDevicePathEnd (Path)) {
     if ((DevicePathType (Path) == HARDWARE_DEVICE_PATH) &&
         (DevicePathSubType (Path) == HW_VENDOR_DP) &&
-        (DevicePathNodeLength (Path) >= sizeof (VENDOR_DEVICE_PATH))) {
-      for (Lun = 0; Lun < ARRAY_SIZE (mUfsGuids); Lun++) {
-        if (CompareGuid (&((VENDOR_DEVICE_PATH *)Path)->Guid, mUfsGuids[Lun])) {
-          return (INTN)Lun;
-        }
-      }
+        (DevicePathNodeLength (Path) >= sizeof (VENDOR_DEVICE_PATH)) &&
+        CompareGuid (&((VENDOR_DEVICE_PATH *)Path)->Guid, &gEfiUfsLU0Guid)) {
+      return TRUE;
     }
     if ((DevicePathType (Path) == MESSAGING_DEVICE_PATH) &&
         (DevicePathSubType (Path) == MSG_UFS_DP) &&
         (DevicePathNodeLength (Path) >= sizeof (UFS_DEVICE_PATH))) {
-      Lun = ((UFS_DEVICE_PATH *)Path)->Lun;
-      return (Lun < ARRAY_SIZE (mUfsGuids)) ? (INTN)Lun : -1;
+      return ((UFS_DEVICE_PATH *)Path)->Lun == 0;
     }
     Path = NextDevicePathNode (Path);
   }
-  return -1;
+  return FALSE;
 }
 
 STATIC EFI_STATUS
-AssignStorageHandles (VOID)
+AssignStorageHandle (IN EFI_USB_MSD_PROTOCOL *UsbMsd)
 {
-  EFI_BLOCK_IO_PROTOCOL *Storage[ARRAY_SIZE (mUfsGuids)];
+  EFI_BLOCK_IO_PROTOCOL *Storage;
   EFI_BLOCK_IO_PROTOCOL *BlockIo;
   EFI_HANDLE *Handles;
   EFI_STATUS Status;
-  EFI_STATUS AssignmentError;
   UINTN HandleCount;
   UINTN Index;
-  UINTN Lun;
-  INTN StorageLun;
-  UINT8 Capacity;
   UINT64 SizeMiB;
 
-  ZeroMem (Storage, sizeof (Storage));
-  Capacity = 0;
-  Status = mUsbMsd->QueryMaxLun (mUsbMsd, &Capacity);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-  if (Capacity == 0) {
-    return EFI_UNSUPPORTED;
-  }
+  Storage = NULL;
   Status = gBS->LocateHandleBuffer (
     ByProtocol, &gEfiBlockIoProtocolGuid, NULL, &HandleCount, &Handles);
   if (EFI_ERROR (Status)) {
@@ -158,49 +108,23 @@ AssignStorageHandles (VOID)
         (BlockIo->Media->BlockSize == 0)) {
       continue;
     }
-    StorageLun = GetUfsLun (Handles[Index]);
-    if ((StorageLun >= 0) && (Storage[StorageLun] == NULL)) {
-      Storage[StorageLun] = BlockIo;
+    if (IsUfsLun0 (Handles[Index])) {
+      Storage = BlockIo;
+      break;
     }
   }
   FreePool (Handles);
-  AssignmentError = EFI_SUCCESS;
-  for (Lun = 0; Lun < ARRAY_SIZE (Storage); Lun++) {
-    if (Storage[Lun] == NULL) {
-      continue;
-    }
-    if (mAssignedLuns >= Capacity) {
-      AddLine ("USB LUN capacity reached");
-      AssignmentError = EFI_OUT_OF_RESOURCES;
-      break;
-    }
-    BlockIo = Storage[Lun];
-    Status = mUsbMsd->AssignBlkIoHandle (mUsbMsd, BlockIo, mAssignedLuns);
-    if (EFI_ERROR (Status)) {
-      AddLine ("LU%u assign: %r", Lun, Status);
-      AssignmentError = Status;
-      continue;
-    }
-    SizeMiB = ((BlockIo->Media->LastBlock + 1) *
-      BlockIo->Media->BlockSize) >> 20;
-    AddLine ("USB%u = UFS LU%u  %Lu MiB", mAssignedLuns, Lun, SizeMiB);
-    mAssignedLuns++;
+  if (Storage == NULL) {
+    return EFI_NOT_FOUND;
   }
-  if (mAssignedLuns == 0) {
-    return EFI_ERROR (AssignmentError) ? AssignmentError : EFI_NOT_FOUND;
+  Status = UsbMsd->AssignBlkIoHandle (UsbMsd, Storage, 0);
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
-  return AssignmentError;
-}
-
-STATIC VOID
-UnassignStorageHandles (VOID)
-{
-  UINT8 Lun;
-
-  for (Lun = 0; Lun < mAssignedLuns; Lun++) {
-    mUsbMsd->AssignBlkIoHandle (mUsbMsd, NULL, Lun);
-  }
-  mAssignedLuns = 0;
+  SizeMiB = ((Storage->Media->LastBlock + 1) *
+    Storage->Media->BlockSize) >> 20;
+  AddLine ("USB0 = UFS LU0  %Lu MiB", SizeMiB);
+  return EFI_SUCCESS;
 }
 
 EFI_STATUS EFIAPI
@@ -208,13 +132,12 @@ MassStorageEntry (
   IN EFI_HANDLE ImageHandle,
   IN EFI_SYSTEM_TABLE *SystemTable)
 {
+  EFI_USB_MSD_PROTOCOL *UsbMsd;
   EFI_STATUS Status;
   EFI_STATUS EventStatus;
   EFI_STATUS LastEventError;
   EFI_INPUT_KEY Key;
 
-  mUsbMsd = NULL;
-  mAssignedLuns = 0;
   gBS->SetWatchdogTimer (0, 0, 0, NULL);
   if (gST->ConOut != NULL) {
     gST->ConOut->ClearScreen (gST->ConOut);
@@ -225,32 +148,30 @@ MassStorageEntry (
     }
   }
   AddLine ("USB Mass Storage");
-  InitializeUsb ();
   Status = gBS->LocateProtocol (
-    &gEfiUsbMsdProtocolGuid, NULL, (VOID **)&mUsbMsd);
+    &gEfiUsbMsdProtocolGuid, NULL, (VOID **)&UsbMsd);
   if (EFI_ERROR (Status)) {
     AddLine ("USB MSD unavailable: %r", Status);
     WaitForExit ();
     return Status;
   }
-  Status = AssignStorageHandles ();
+  Status = AssignStorageHandle (UsbMsd);
   if (EFI_ERROR (Status)) {
     AddLine ("Storage assignment: %r", Status);
-    UnassignStorageHandles ();
     WaitForExit ();
     return Status;
   }
-  Status = mUsbMsd->StartDevice (mUsbMsd);
+  Status = UsbMsd->StartDevice (UsbMsd);
   if (EFI_ERROR (Status)) {
     AddLine ("StartDevice: %r", Status);
-    UnassignStorageHandles ();
+    UsbMsd->AssignBlkIoHandle (UsbMsd, NULL, 0);
     WaitForExit ();
     return Status;
   }
   AddLine ("Connect USB to the computer. Volume Up: return.");
   LastEventError = EFI_SUCCESS;
   while (!ExitPressed ()) {
-    EventStatus = mUsbMsd->EventHandler (mUsbMsd);
+    EventStatus = UsbMsd->EventHandler (UsbMsd);
     if (EFI_ERROR (EventStatus) && (EventStatus != EFI_NOT_READY) &&
         (EventStatus != LastEventError)) {
       AddLine ("USB event error: %r", EventStatus);
@@ -258,13 +179,13 @@ MassStorageEntry (
     }
     gBS->Stall (100);
   }
-  Status = mUsbMsd->StopDevice (mUsbMsd);
+  Status = UsbMsd->StopDevice (UsbMsd);
   if (EFI_ERROR (Status)) {
     AddLine ("StopDevice: %r", Status);
     WaitForExit ();
     return Status;
   }
-  UnassignStorageHandles ();
+  UsbMsd->AssignBlkIoHandle (UsbMsd, NULL, 0);
   if (gST->ConOut != NULL) {
     gST->ConOut->ClearScreen (gST->ConOut);
   }

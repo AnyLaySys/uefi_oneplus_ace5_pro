@@ -311,6 +311,8 @@ HummerLinuxBootEntry (
     sizeof (BootArgs),
     "%a%a hummer.build_id=%a",
     mLinuxCommandLine,
+    (AsciiStrnCmp (Payload->BuildId, "M7-RW-", 6) == 0) ?
+      " efi=noruntime retain_initrd sd_mod.hummer_read_only=0 ufshcd_core.hummer_read_only=0 ufshcd_core.use_mcq_mode=0" :
     ((AsciiStrnCmp (Payload->BuildId, "M6-", 3) == 0) ||
      (AsciiStrnCmp (Payload->BuildId, "M7-", 3) == 0)) ?
       " efi=noruntime retain_initrd sd_mod.hummer_read_only=1 ufshcd_core.hummer_read_only=1 ufshcd_core.use_mcq_mode=0" :
