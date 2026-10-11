@@ -44,9 +44,7 @@ APRIORI DXE {
   INF Binaries/hummer/MdeModulePkg/Universal/Disk/DiskIoDxe/DiskIoDxe.inf
   INF Binaries/hummer/MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
   INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/UFSDxe/UFSDxe.inf
-!endif
   INF FatPkg/EnhancedFatDxe/Fat.inf
 
   INF Binaries/hummer/QcomPkg/Drivers/TzDxe/TzDxeLA.inf
@@ -54,20 +52,12 @@ APRIORI DXE {
   INF MdeModulePkg/Universal/Variable/RuntimeDxe/VariableRuntimeDxe.inf
 
   INF Binaries/hummer/QcomPkg/Drivers/DDRInfoDxe/DDRInfoDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/OcdtDxe/OplusProject.inf
-!endif
   INF Binaries/hummer/QcomPkg/Drivers/FeatureEnablerDxe/FeatureEnablerDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/TsensDxe/TsensDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/PILProxyDxe/PILProxyDxe.inf
-!endif
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/PILDxe/PILDxe.inf
-!endif
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/SPSSDxe/SPSSDxe.inf
-!endif
   INF Binaries/hummer/QcomPkg/Drivers/GLinkDxe/GLinkDxe.inf
 
   INF MdeModulePkg/Universal/WatchdogTimerDxe/WatchdogTimer.inf
@@ -98,9 +88,7 @@ APRIORI DXE {
   INF Binaries/hummer/QcomPkg/Drivers/UsbInitDxe/UsbInitDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/UCDxe/UCDxe.inf
 
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/ButtonsDxe/ButtonsDxe.inf
-!endif
 
   INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
 

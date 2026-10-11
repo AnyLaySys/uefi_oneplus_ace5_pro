@@ -21,23 +21,18 @@ The output is `Mu-hummer.img`. Use the matching device firmware in
   standard console shows the disk capacity and errors. USB initialization
   uses the boot manager's console connection path, as on dodge; the
   application does not signal controller initialization a second time.
-- Linux Test starts an EFI Linux Image with its OS DT and external initrd
+- Linux starts an EFI Linux Image with its OS DT and external initrd
   supplied in the BootShim-tail payload. It keeps payload validation,
   memory reservations and restoration of the previous DT on return.
-- Linux Logs exports copies of the console and pmsg reserved-memory buffers
-  as a temporary USB RAM disk. The original buffers and UFS are not written
-  by the log exporter. `INFO.TXT` retains the copied-buffer CRCs.
 
 Normal boot enters the Mu menu without the former R9 UFS diagnostic page,
 extra GPT/reference reads or the diagnostic key wait. Essential error output
 and firmware exception diagnostics remain available.
 
-`HUMMER_LOG_RECOVERY=TRUE` selects the dedicated recovery profile. The Linux
-launcher preserves the M4/M6/M7 command-line policies, including
-`efi=noruntime`, `retain_initrd` and the M6/M7 UFS read-only parameters.
-The `M7-RW-` build ID prefix requests writable UFS by setting both
-`hummer_read_only` parameters to zero, while keeping MCQ disabled.
-Other M6/M7 payloads retain their previous read-only policy.
+The Linux launcher applies one fixed command-line policy: `efi=noruntime`,
+`retain_initrd`, and MCQ disabled (`ufshcd_core.use_mcq_mode=0`), with the
+UFS left writable. The build ID is an informational timestamp appended as
+`hummer.build_id=` and no longer selects boot policy.
 USB reset and recovery behavior after Linux still require hardware testing;
 a successful firmware build does not establish reset reliability.
 

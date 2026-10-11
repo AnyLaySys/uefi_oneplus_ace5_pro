@@ -20,5 +20,4 @@
   PcdLib
 
 [FixedPcd]
-  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery
   gQcomPkgTokenSpaceGuid.PcdMassStorageFile

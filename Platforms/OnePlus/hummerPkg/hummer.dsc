@@ -27,7 +27,6 @@
 !include PakalaPkg/PakalaPkg.dsc.inc
 
 [PcdsFixedAtBuild]
-  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery|$(HUMMER_LOG_RECOVERY)
   gQcomPkgTokenSpaceGuid.PcdMassStorageFile|{ 0x35, 0x1F, 0xC9, 0x72, 0x94, 0x18, 0x2C, 0x4E, 0x84, 0x76, 0x66, 0xC7, 0x27, 0x51, 0x48, 0xD5 }
 
   gArmTokenSpaceGuid.PcdSystemMemoryBase|0x80000000
@@ -66,5 +65,4 @@
   }
   hummerPkg/Applications/MassStorage/MassStorage.inf
   hummerPkg/Applications/HummerLinuxBoot/HummerLinuxBoot.inf
-  hummerPkg/Applications/HummerLogExport/HummerLogExport.inf
 

@@ -40,9 +40,7 @@
   INF Binaries/hummer/MdeModulePkg/Universal/Disk/PartitionDxe/PartitionDxe.inf
   INF FatPkg/EnhancedFatDxe/Fat.inf
   INF MdeModulePkg/Universal/Disk/UnicodeCollation/EnglishDxe/EnglishDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/UFSDxe/UFSDxe.inf
-!endif
 
   INF Binaries/hummer/QcomPkg/Drivers/CmdDbDxe/CmdDbDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/PwrUtilsDxe/PwrUtilsDxe.inf
@@ -67,28 +65,18 @@
 
   INF SiliciumPkg/Drivers/SimpleFbDxe/SimpleFbDxe.inf
 
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/ButtonsDxe/ButtonsDxe.inf
-!endif
   INF Binaries/hummer/QcomPkg/Drivers/IPCCDxe/IPCCDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/DDRInfoDxe/DDRInfoDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/OcdtDxe/OplusProject.inf
-!endif
 
   INF Binaries/hummer/QcomPkg/Drivers/RNGDxe/RngDxe.inf
 
   INF MdeModulePkg/Universal/Acpi/AcpiTableDxe/AcpiTableDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/TsensDxe/TsensDxe.inf
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/PILProxyDxe/PILProxyDxe.inf
-!endif
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/PILDxe/PILDxe.inf
-!endif
-!if $(HUMMER_LOG_RECOVERY) != TRUE
   INF Binaries/hummer/QcomPkg/Drivers/SPSSDxe/SPSSDxe.inf
-!endif
   INF Binaries/hummer/QcomPkg/Drivers/GLinkDxe/GLinkDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/SPIDxe/SPIDxe.inf
   INF Binaries/hummer/QcomPkg/Drivers/PmicGlinkDxe/PmicGlinkDxe.inf

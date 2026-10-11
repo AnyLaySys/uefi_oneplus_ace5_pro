@@ -6,9 +6,3 @@
 
 [Includes]
   Include
-
-[Guids]
-  gHummerPkgTokenSpaceGuid = { 0x5799D220, 0xB951, 0x4D49, { 0xA8, 0xF4, 0x95, 0x28, 0x27, 0xBD, 0x44, 0x70 } }
-
-[PcdsFixedAtBuild]
-  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery|FALSE|BOOLEAN|0x00001000

@@ -17,10 +17,6 @@
   QcomPkg/QcomPkg.dec
 
 [LibraryClasses]
-  PcdLib
-  DebugLib
-  DevicePathLib
-  MemoryAllocationLib
   RfsProtectionLib
   UefiBootServicesTableLib
   UefiLib
@@ -28,10 +24,3 @@
 [Guids]
   gUsbControllerInitGuid
   gSdCardInitGuid
-
-[Protocols]
-  gEfiLoadedImageProtocolGuid
-  gEfiDevicePathProtocolGuid
-
-[FixedPcd]
-  gHummerPkgTokenSpaceGuid.PcdHummerLogRecovery

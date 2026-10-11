@@ -20,7 +20,7 @@ STATIC EFI_GUID mHummerLinuxPayloadHobGuid = HUMMER_LINUX_PAYLOAD_HOB_GUID;
 STATIC VOID *mInitrdData;
 STATIC UINTN mInitrdSize;
 STATIC EFI_HANDLE mInitrdHandle;
-STATIC CONST CHAR8 mLinuxCommandLine[] = "console=tty0 rdinit=/init acpi=off loglevel=7 log_buf_len=1M panic=0 cpuidle.off=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused pstore.backend=ramoops hummer.linux_test=1";
+STATIC CONST CHAR8 mLinuxCommandLine[] = "console=tty0 rdinit=/init acpi=off loglevel=8 ignore_loglevel initcall_debug log_buf_len=4M panic=0 cpuidle.off=1 clk_ignore_unused pd_ignore_unused regulator_ignore_unused pstore.backend=ramoops efi=noruntime retain_initrd ufshcd_core.use_mcq_mode=0 fw_devlink=permissive";
 
 #pragma pack(1)
 typedef struct {
@@ -309,14 +309,8 @@ HummerLinuxBootEntry (
   AsciiSPrint (
     BootArgs,
     sizeof (BootArgs),
-    "%a%a hummer.build_id=%a",
+    "%a hummer.build_id=%a",
     mLinuxCommandLine,
-    (AsciiStrnCmp (Payload->BuildId, "M7-RW-", 6) == 0) ?
-      " efi=noruntime retain_initrd sd_mod.hummer_read_only=0 ufshcd_core.hummer_read_only=0 ufshcd_core.use_mcq_mode=0" :
-    ((AsciiStrnCmp (Payload->BuildId, "M6-", 3) == 0) ||
-     (AsciiStrnCmp (Payload->BuildId, "M7-", 3) == 0)) ?
-      " efi=noruntime retain_initrd sd_mod.hummer_read_only=1 ufshcd_core.hummer_read_only=1 ufshcd_core.use_mcq_mode=0" :
-      ((AsciiStrnCmp (Payload->BuildId, "M4-", 3) == 0) ? " efi=noruntime" : ""),
     Payload->BuildId
     );
   PreviousDtb = NULL;

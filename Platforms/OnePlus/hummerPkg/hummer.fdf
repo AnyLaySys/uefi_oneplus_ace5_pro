@@ -50,7 +50,6 @@ READ_LOCK_STATUS   = TRUE
 
   INF hummerPkg/Applications/MassStorage/MassStorage.inf
   INF hummerPkg/Applications/HummerLinuxBoot/HummerLinuxBoot.inf
-  INF hummerPkg/Applications/HummerLogExport/HummerLogExport.inf
 
   !include SiliciumPkg/Extra.fdf.inc
 
