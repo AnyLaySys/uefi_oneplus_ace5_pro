@@ -1,0 +1,43 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = WindowsBoot
+  FILE_GUID = AAB3207E-C482-4D64-A5B9-CC4B87214B35
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = WindowsBootEntry
+
+[Sources]
+  WindowsBoot.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  PcBdsPkg/PcBdsPkg.dec
+  QcomPkg/QcomPkg.dec
+  hummerPkg/hummer.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  IoLib
+  DevicePathLib
+  FdtLib
+  HobLib
+  MemoryAllocationLib
+  MsBootPolicyLib
+  UefiApplicationEntryPoint
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+  UefiLib
+  WindowsKernelPatchLib
+
+[Protocols]
+  gEfiClockProtocolGuid
+  gEfiPartitionInfoProtocolGuid
+  gEfiSimpleFileSystemProtocolGuid
+  gEfiUsbMsdProtocolGuid
+  gEfiUsbfnIoProtocolGuid
+
+[Guids]
+  gUsbControllerInitGuid
+  gFdtTableGuid

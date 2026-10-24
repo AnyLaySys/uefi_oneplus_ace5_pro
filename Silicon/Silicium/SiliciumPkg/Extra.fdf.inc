@@ -22,17 +22,3 @@
   }
 !endif
 
-  FILE FREEFORM = PCD (gOemPkgTokenSpaceGuid.PcdLogoFile) {
-    SECTION RAW = SiliciumPkg/Include/Resources/BootLogo.bmp
-    SECTION UI = "BootLogo.bmp"
-  }
-
-  FILE FREEFORM = PCD (gSiliciumPkgTokenSpaceGuid.PcdNoBootOSFile) {
-    SECTION RAW = SiliciumPkg/Include/Resources/NoBootOS.bmp
-    SECTION UI = "NoBootOS.bmp"
-  }
-
-  FILE FREEFORM = PCD (gSiliciumPkgTokenSpaceGuid.PcdMassStorageBmpFile) {
-    SECTION RAW = SiliciumPkg/Include/Resources/MassStorage.bmp
-    SECTION UI = "MassStorage.bmp"
-  }

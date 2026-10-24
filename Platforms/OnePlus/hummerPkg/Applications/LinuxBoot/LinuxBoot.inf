@@ -1,0 +1,36 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = LinuxBoot
+  FILE_GUID = 7B2D0E54-5B4F-4D86-9D4C-B29A7E0D1A39
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  ENTRY_POINT = LinuxBootEntry
+
+[Sources]
+  LinuxBoot.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  QcomPkg/QcomPkg.dec
+  hummerPkg/hummer.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  FdtLib
+  HobLib
+  PrintLib
+  UefiApplicationEntryPoint
+  UefiBootServicesTableLib
+  UefiLib
+
+[Protocols]
+  gEfiDevicePathProtocolGuid
+  gEfiLoadFile2ProtocolGuid
+  gEfiLoadedImageProtocolGuid
+  gEfiUsbMsdProtocolGuid
+
+[Guids]
+  gFdtTableGuid
+  gLinuxEfiInitrdMediaGuid

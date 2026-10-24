@@ -2,25 +2,42 @@
 #include <Library/BaseMemoryLib.h>
 #include <Library/DevicePathLib.h>
 #include <Library/MemoryAllocationLib.h>
-#include <Library/PrintLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/UefiLib.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/DevicePath.h>
 #include <Protocol/EFIUsbMsd.h>
+#include <Protocol/GraphicsOutput.h>
 
 STATIC VOID
-AddLine (IN CONST CHAR8 *Format, ...)
+ShowStatus (VOID)
 {
-  VA_LIST Args;
-  CHAR8 Line[192];
+  EFI_GRAPHICS_OUTPUT_PROTOCOL *Graphics;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Black;
+  UINTN Columns = 80;
+  UINTN Rows = 25;
 
-  VA_START (Args, Format);
-  AsciiVSPrint (Line, sizeof (Line), Format, Args);
-  VA_END (Args);
-  if (gST->ConOut != NULL) {
-    AsciiPrint ("%a\r\n", Line);
+  ZeroMem (&Black, sizeof (Black));
+  if (!EFI_ERROR (gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&Graphics))) {
+    Graphics->Blt (
+      Graphics,
+      &Black,
+      EfiBltVideoFill,
+      0,
+      0,
+      0,
+      0,
+      Graphics->Mode->Info->HorizontalResolution,
+      Graphics->Mode->Info->VerticalResolution,
+      0
+      );
   }
+
+  gST->ConOut->ClearScreen (gST->ConOut);
+  gST->ConOut->QueryMode (gST->ConOut, gST->ConOut->Mode->Mode, &Columns, &Rows);
+  gST->ConOut->SetAttribute (gST->ConOut, EFI_TEXT_ATTR (EFI_LIGHTGRAY, EFI_BLACK));
+  gST->ConOut->SetCursorPosition (gST->ConOut, (Columns - (sizeof (L"Mass Storage") / sizeof (CHAR16) - 1)) / 2, Rows / 2);
+  gST->ConOut->OutputString (gST->ConOut, L"Mass Storage");
 }
 
 STATIC BOOLEAN
@@ -35,24 +52,6 @@ ExitPressed (VOID)
   ZeroMem (&Key, sizeof (Key));
   Status = gST->ConIn->ReadKeyStroke (gST->ConIn, &Key);
   return !EFI_ERROR (Status) && (Key.ScanCode == SCAN_UP);
-}
-
-STATIC VOID
-WaitForExit (VOID)
-{
-  EFI_STATUS Status;
-  UINTN EventIndex;
-
-  AddLine ("Volume Up: return to Mu menu");
-  if (gST->ConIn == NULL) {
-    return;
-  }
-  while (!ExitPressed ()) {
-    Status = gBS->WaitForEvent (1, &gST->ConIn->WaitForKey, &EventIndex);
-    if (EFI_ERROR (Status)) {
-      return;
-    }
-  }
 }
 
 STATIC BOOLEAN
@@ -92,7 +91,6 @@ AssignStorageHandle (IN EFI_USB_MSD_PROTOCOL *UsbMsd)
   EFI_STATUS Status;
   UINTN HandleCount;
   UINTN Index;
-  UINT64 SizeMiB;
 
   Storage = NULL;
   Status = gBS->LocateHandleBuffer (
@@ -121,9 +119,6 @@ AssignStorageHandle (IN EFI_USB_MSD_PROTOCOL *UsbMsd)
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  SizeMiB = ((Storage->Media->LastBlock + 1) *
-    Storage->Media->BlockSize) >> 20;
-  AddLine ("USB0 = UFS LU0  %Lu MiB", SizeMiB);
   return EFI_SUCCESS;
 }
 
@@ -135,7 +130,7 @@ MassStorageEntry (
   EFI_USB_MSD_PROTOCOL *UsbMsd;
   EFI_STATUS Status;
   EFI_STATUS EventStatus;
-  EFI_STATUS LastEventError;
+  EFI_STATUS StopStatus;
   EFI_INPUT_KEY Key;
 
   gBS->SetWatchdogTimer (0, 0, 0, NULL);
@@ -147,47 +142,34 @@ MassStorageEntry (
     while (!EFI_ERROR (gST->ConIn->ReadKeyStroke (gST->ConIn, &Key))) {
     }
   }
-  AddLine ("USB Mass Storage");
+  ShowStatus ();
   Status = gBS->LocateProtocol (
     &gEfiUsbMsdProtocolGuid, NULL, (VOID **)&UsbMsd);
   if (EFI_ERROR (Status)) {
-    AddLine ("USB MSD unavailable: %r", Status);
-    WaitForExit ();
     return Status;
   }
   Status = AssignStorageHandle (UsbMsd);
   if (EFI_ERROR (Status)) {
-    AddLine ("Storage assignment: %r", Status);
-    WaitForExit ();
     return Status;
   }
   Status = UsbMsd->StartDevice (UsbMsd);
   if (EFI_ERROR (Status)) {
-    AddLine ("StartDevice: %r", Status);
     UsbMsd->AssignBlkIoHandle (UsbMsd, NULL, 0);
-    WaitForExit ();
     return Status;
   }
-  AddLine ("Connect USB to the computer. Volume Up: return.");
-  LastEventError = EFI_SUCCESS;
+  Status = EFI_SUCCESS;
   while (!ExitPressed ()) {
     EventStatus = UsbMsd->EventHandler (UsbMsd);
-    if (EFI_ERROR (EventStatus) && (EventStatus != EFI_NOT_READY) &&
-        (EventStatus != LastEventError)) {
-      AddLine ("USB event error: %r", EventStatus);
-      LastEventError = EventStatus;
+    if (EFI_ERROR (EventStatus) && (EventStatus != EFI_NOT_READY)) {
+      Status = EventStatus;
+      break;
     }
     gBS->Stall (100);
   }
-  Status = UsbMsd->StopDevice (UsbMsd);
-  if (EFI_ERROR (Status)) {
-    AddLine ("StopDevice: %r", Status);
-    WaitForExit ();
-    return Status;
-  }
+  StopStatus = UsbMsd->StopDevice (UsbMsd);
   UsbMsd->AssignBlkIoHandle (UsbMsd, NULL, 0);
   if (gST->ConOut != NULL) {
     gST->ConOut->ClearScreen (gST->ConOut);
   }
-  return EFI_SUCCESS;
+  return EFI_ERROR (Status) ? Status : StopStatus;
 }

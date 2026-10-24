@@ -1,0 +1,39 @@
+#include "AcpiTables.h"
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_DESCRIPTION_HEADER Header;
+  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Package;
+  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Clusters[2];
+  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Cpus[8];
+} HUMMER_PPTT;
+#pragma pack ()
+
+#define HUMMER_CLUSTER { \
+  .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, \
+  .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR), \
+  .Parent = OFFSET_OF (HUMMER_PPTT, Package) }
+
+#define HUMMER_CPU(Uid, Cluster) { \
+  .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, \
+  .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR), \
+  .Flags = { .AcpiProcessorIdValid = 1, .NodeIsALeaf = 1 }, \
+  .Parent = OFFSET_OF (HUMMER_PPTT, Clusters[Cluster]), .AcpiProcessorId = Uid }
+
+HUMMER_PPTT Pptt = {
+  .Header = HUMMER_ACPI_HEADER (
+    EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE_STRUCTURE_SIGNATURE,
+    HUMMER_PPTT, EFI_ACPI_6_4_PROCESSOR_PROPERTIES_TOPOLOGY_TABLE_REVISION),
+  .Package = {
+    .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR,
+    .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR),
+    .Flags = { .PhysicalPackage = 1 },
+  },
+  .Clusters = { HUMMER_CLUSTER, HUMMER_CLUSTER },
+  .Cpus = {
+    HUMMER_CPU (0, 0), HUMMER_CPU (1, 0), HUMMER_CPU (2, 0), HUMMER_CPU (3, 0),
+    HUMMER_CPU (4, 0), HUMMER_CPU (5, 0), HUMMER_CPU (6, 1), HUMMER_CPU (7, 1),
+  },
+};
+
+VOID *CONST ReferenceAcpiTable = &Pptt;

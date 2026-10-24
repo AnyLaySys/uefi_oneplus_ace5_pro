@@ -10,7 +10,7 @@ as ordinary directories; no Git submodule initialization is required:
 python3 build_uefi.py -d hummer -r DEBUG
 ```
 
-The output is `Mu-hummer.img`. Use the matching device firmware in
+The output is `hummer.img`. Use the matching device firmware in
 `Binaries/hummer`; patch definitions and source hashes are recorded there.
 
 ## Boot options
@@ -25,7 +25,7 @@ The output is `Mu-hummer.img`. Use the matching device firmware in
   supplied in the BootShim-tail payload. It keeps payload validation,
   memory reservations and restoration of the previous DT on return.
 
-Normal boot enters the Mu menu without the former R9 UFS diagnostic page,
+Normal boot enters the boot menu without the former R9 UFS diagnostic page,
 extra GPT/reference reads or the diagnostic key wait. Essential error output
 and firmware exception diagnostics remain available.
 
@@ -42,7 +42,7 @@ The inherited framebuffer is 1264 x 2780 BGRA. Memory and integer
 configuration were derived from the device's post-DDR XBL configuration.
 
 - Original firmware reservation starts at `0xA7000000`.
-- Mu FD: `0xA7100000`, size `0x00300000`.
+- UEFI FD: `0xA7100000`, size `0x00300000`.
 - UEFI stack: `0xA760D000`, size `0x00040000`.
 - DXE heap: `0xBD930000`, size `0x1A6D0000`.
 - Display reservation: `0xFC800000`, size `0x02B00000`.
@@ -50,5 +50,5 @@ configuration were derived from the device's post-DDR XBL configuration.
 
 `Resources/DTBs/hummer.dtb` is the Android loader DT snapshot, with runtime
 initrd pointers and entropy removed. The mainline Linux OS DT is a separate
-payload input. This Mu image does not replace the phone's Android firmware
+payload input. This image does not replace the phone's Android firmware
 partitions.

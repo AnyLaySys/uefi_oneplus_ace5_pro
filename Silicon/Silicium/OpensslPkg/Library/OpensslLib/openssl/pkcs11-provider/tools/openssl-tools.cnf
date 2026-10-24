@@ -1,4 +1,0 @@
-.include ../tests/tmp.softokn/openssl.cnf
-
-[pkcs11_sect]
-pkcs11-module-encode-provider-uri-to-pem = true

@@ -6,3 +6,6 @@
 
 [Includes]
   Include
+
+[LibraryClasses]
+  WindowsKernelPatchLib|Include/Library/WindowsKernelPatchLib.h

@@ -20,7 +20,6 @@
   MdePkg/MdePkg.dec
   PcBdsPkg/PcBdsPkg.dec
   MsCorePkg/MsCorePkg.dec
-  MsGraphicsPkg/MsGraphicsPkg.dec
   MdeModulePkg/MdeModulePkg.dec
   SiliciumPkg/SiliciumPkg.dec
 
@@ -29,12 +28,10 @@
   DebugLib
   AcpiTableUpdateLib
   DeviceBootManagerLib
-  UefiRuntimeServicesTableLib
   UefiBootServicesTableLib
   SecureBootHandlerLib
   MemoryAllocationLib
   MsBootOptionsLib
-  BootGraphicsLib
   DevicePathLib
   PrintLib
 

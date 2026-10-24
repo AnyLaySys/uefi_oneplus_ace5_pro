@@ -63,7 +63,7 @@ def setup_logger ():
 
 def parse_arguments () -> BuildContext:
     # Create Argument Parser
-    parser = argparse.ArgumentParser (description="Build Project Silicium UEFI for the defined ARM64-Based Device.")
+    parser = argparse.ArgumentParser (description="Build the hummer UEFI firmware.")
 
     # Add Script Arguments
     parser.add_argument ("-d", "--device",            type=str, required=True,                                   help="Defines the Device to Build.")
@@ -126,10 +126,10 @@ def cleanup_old_build (device: str, device_model: int, cleanup: bool):
         BOOT_SHIM_PATH / "BootShim.elf",
         BOOT_SHIM_PATH / "BootShim.bin",
         BUILD_PATH / f"{device}Pkg" / f"{device}-kernel",
-        Path (f"Mu-{device}-{device_model}.img"),
-        Path (f"Mu-{device}-{device_model}.bin"),
-        Path (f"Mu-{device}.img"),
-        Path (f"Mu-{device}.bin")
+        Path (f"{device}-{device_model}.img"),
+        Path (f"{device}-{device_model}.bin"),
+        Path (f"{device}.img"),
+        Path (f"{device}.bin")
     ]
 
     # Delete Old Build Files
@@ -205,15 +205,15 @@ def create_android_boot_img (ctx: BuildContext, image_kernel_config: dict, image
     # Set File Paths
     android_kernel  = device_pkg_path    / f"{ctx.device}-kernel"
     device_dtb      = RESOURCE_DTBS_PATH / f"{ctx.device}.dtb"
-    uefi_fd         = fv_path            / "SILICIUM_UEFI.fd"
-    uefi_fd_gz      = fv_path            / "SILICIUM_UEFI.fd.gz"
+    uefi_fd         = fv_path            / "HUMMER_UEFI.fd"
+    uefi_fd_gz      = fv_path            / "HUMMER_UEFI.fd.gz"
 
     # Check Boot Shim Flag
     if append_boot_shim:
         # Set Boot Shim Paths
         boot_shim_payload = BOOT_SHIM_PATH / "BootShim.bin"
-        boot_shim_fd      = fv_path        / "SILICIUM_UEFI.fd-bootshim"
-        boot_shim_fd_gz   = fv_path        / "SILICIUM_UEFI.fd-bootshim.gz"
+        boot_shim_fd      = fv_path        / "HUMMER_UEFI.fd-bootshim"
+        boot_shim_fd_gz   = fv_path        / "HUMMER_UEFI.fd-bootshim.gz"
 
         try:
             # Read File Content
@@ -285,7 +285,7 @@ def create_android_boot_img (ctx: BuildContext, image_kernel_config: dict, image
         return False
 
     # Set Output File Name
-    output_file_name = f"Mu-{ctx.device}-{ctx.device_model}.img" if add_output_suffix else f"Mu-{ctx.device}.img"
+    output_file_name = f"{ctx.device}-{ctx.device_model}.img" if add_output_suffix else f"{ctx.device}.img"
 
     # Set Base mkbootimg Command
     cmd = [
@@ -325,14 +325,14 @@ def create_android_boot_img (ctx: BuildContext, image_kernel_config: dict, image
 
 def create_payload_file (ctx: BuildContext, payload_config: dict, append_boot_shim: bool, add_output_suffix: bool) -> bool:
     # Set Output File Name
-    output_file_name = f"Mu-{ctx.device}-{ctx.device_model}.bin" if add_output_suffix else f"Mu-{ctx.device}.bin"
+    output_file_name = f"{ctx.device}-{ctx.device_model}.bin" if add_output_suffix else f"{ctx.device}.bin"
 
     # Set Base Paths
     device_pkg_path = BUILD_PATH      / f"{ctx.device}Pkg"
     fv_path         = device_pkg_path / f"{ctx.build_mode}_CLANGPDB" / "FV"
 
     # Set File Paths
-    uefi_fd         = fv_path         / "SILICIUM_UEFI.fd"
+    uefi_fd         = fv_path         / "HUMMER_UEFI.fd"
     output_file     = Path.cwd ()     / output_file_name
 
     # Get Payload Type

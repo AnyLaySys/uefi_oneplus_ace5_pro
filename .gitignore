@@ -5,5 +5,7 @@ Conf
 bootpayload.bin
 BootShim.bin
 BootShim.elf
-Mu-*.*
+hummer.img
+BootShim/BootShim.bin
+BootShim/BootShim.elf
 *:Zone.Identifier

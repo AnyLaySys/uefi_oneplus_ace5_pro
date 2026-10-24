@@ -32,6 +32,7 @@
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
+  hummerPkg/hummer.dec
 
 [LibraryClasses]
   HiiLib
@@ -47,6 +48,7 @@
 [Protocols]
   gEfiBootLogoProtocolGuid                      ## SOMETIMES_CONSUMES
   gEfiLoadedImageDevicePathProtocolGuid         ## CONSUMES
+  gEfiLoadedImageProtocolGuid                   ## CONSUMES
 
 [Pcd]
   gEfiMdeModulePkgTokenSpaceGuid.PcdConOutRow                          ## PRODUCES

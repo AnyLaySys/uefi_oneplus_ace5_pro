@@ -10,7 +10,7 @@ function _help(){
     echo "  --package-manager PAK, -p PAK:   Chose what Package Manager you use."
     echo "  --help, -h:                      Shows this Help."
     echo 
-    echo "MainPage: https://github.com/Project-Silicium/Mu-Silicium"
+    echo "MainPage: https://github.com/tianocore/edk2"
     exit 1
 }
 

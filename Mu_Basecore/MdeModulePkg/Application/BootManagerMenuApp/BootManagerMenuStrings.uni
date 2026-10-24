@@ -11,14 +11,12 @@
 #langdef   en-US "English"
 #langdef   fr-FR "Français"
 
-#string STR_BOOT_POPUP_MENU_TITLE_STRING  #language    en-US    "Please select boot device:"
-                                          #language    fr-FR    "Please select boot device:"
+#string STR_BOOT_POPUP_MENU_TITLE_STRING  #language    en-US    "Boot Menu"
+                                          #language    fr-FR    "Boot Menu"
 
-#string STR_BOOT_POPUP_MENU_HELP1_STRING  #language    en-US    "↑ and ↓ to move selection"
-                                          #language    fr-FR    "↑ and ↓ to move selection"
+#string STR_BOOT_POPUP_MENU_HELP1_STRING  #language    en-US    "Vol+/- Move"
+                                          #language    fr-FR    "Vol+/- Move"
 
-#string STR_BOOT_POPUP_MENU_HELP2_STRING  #language    en-US    "ENTER to select boot device"
-                                          #language    fr-FR    "ENTER to select boot device"
+#string STR_BOOT_POPUP_MENU_HELP2_STRING  #language    en-US    "Pwr Select"
+                                          #language    fr-FR    "Pwr Select"
 
-#string STR_BOOT_POPUP_MENU_HELP3_STRING  #language    en-US    "ESC to exit"
-                                          #language    fr-FR    "ESC to exit"

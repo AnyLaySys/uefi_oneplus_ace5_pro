@@ -3,8 +3,8 @@
 #include <Library/PcdLib.h>
 #include <Library/PlatformBootOptionsLib.h>
 
-STATIC EFI_GUID mHummerLinuxBootGuid = {
-  0x7B2D0E54, 0x5B4F, 0x4D86, { 0x9D, 0x4C, 0xB2, 0x9A, 0x7E, 0x0D, 0x1A, 0x39 }
+STATIC EFI_GUID mInternalStorageMenuGuid = {
+  0xB2F146C7, 0x34D6, 0x4CB0, { 0x91, 0x27, 0x61, 0x26, 0x3E, 0xAB, 0x70, 0x15 }
 };
 
 VOID
@@ -17,8 +17,8 @@ GetPlatformBootOptions (
   if (*BootOption == NULL) {
     return;
   }
-  (*BootOption)[0].AppName = L"Linux";
-  (*BootOption)[0].AppGuid = &mHummerLinuxBootGuid;
+  (*BootOption)[0].AppName = L"Internal Storage";
+  (*BootOption)[0].AppGuid = &mInternalStorageMenuGuid;
   (*BootOption)[0].LoadAttribute = LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP;
   (*BootOption)[1].AppName = L"Mass Storage";
   (*BootOption)[1].AppGuid = FixedPcdGetPtr (PcdMassStorageFile);

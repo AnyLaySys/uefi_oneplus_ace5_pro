@@ -51,4 +51,10 @@ PatchTransferToKernel (
   IN UINTN                 ShellCodeSize
   );
 
+EFI_STATUS
+InstallTransferToKernelPatch (
+  IN UINT8 *ShellCode,
+  IN UINTN ShellCodeSize
+  );
+
 #endif /* _KERNEL_ERRATA_PATCHER_LIB_H_ */

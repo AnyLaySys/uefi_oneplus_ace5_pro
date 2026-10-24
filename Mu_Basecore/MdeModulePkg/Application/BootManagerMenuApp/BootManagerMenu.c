@@ -7,12 +7,17 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
 #include <Library/UefiRuntimeServicesTableLib.h>
+#include <BootOptions.h>
 
 #include "BootManagerMenu.h"
 
 EFI_HII_HANDLE  gStringPackHandle;
 
+STATIC EFI_GUID  mLinuxBootGuid   = HUMMER_LINUX_BOOT_FILE_GUID;
+STATIC EFI_GUID  mWindowsBootGuid = HUMMER_WINDOWS_BOOT_FILE_GUID;
+
 BOOLEAN  mModeInitialized = FALSE;
+BOOLEAN  mInternalStorageMenu = FALSE;
 
 //
 // Boot video resolution and text mode.
@@ -402,14 +407,10 @@ InitializeBootMenuData (
   }
 
   //
-  // Add Power Off Option
-  //
-  BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Power Off", NULL);
-
-  //
-  // Add Exit Option
-  //
-  BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Exit", NULL);
+  if (!mInternalStorageMenu) {
+    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Power Off", NULL);
+    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Exit", NULL);
+  }
 
   BootMenuData->ItemCount    = StrIndex;
   BootMenuData->HelpToken[0] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP1_STRING);
@@ -1027,6 +1028,11 @@ BootManagerMenuEntry (
   EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *SimpleTextOut;
   UINTN                            BootTextColumn;
   UINTN                            BootTextRow;
+  EFI_LOADED_IMAGE_PROTOCOL        *LoadedImage;
+  EFI_BOOT_MANAGER_LOAD_OPTION     *InternalOptions;
+  MEDIA_FW_VOL_FILEPATH_DEVICE_PATH FileNode;
+  EFI_DEVICE_PATH_PROTOCOL         *DevicePath;
+  BOOLEAN                          InternalStorage;
 
   //
   // Set Logo status invalid when boot manager menu is launched
@@ -1054,7 +1060,55 @@ BootManagerMenuEntry (
   EfiBootManagerConnectAll ();
   EfiBootManagerRefreshAllBootOption ();
 
-  BootOption = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
+  InternalStorage = FALSE;
+  LoadedImage = NULL;
+  Status = gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
+  if (!EFI_ERROR (Status) && LoadedImage->LoadOptionsSize == sizeof ("INTERNAL_STORAGE") &&
+      CompareMem (LoadedImage->LoadOptions, "INTERNAL_STORAGE", sizeof ("INTERNAL_STORAGE")) == 0) {
+    InternalStorage = TRUE;
+  }
+
+  if (InternalStorage) {
+    mInternalStorageMenu = TRUE;
+    InternalOptions = AllocateZeroPool (2 * sizeof (*InternalOptions));
+    if (InternalOptions == NULL) {
+      return EFI_OUT_OF_RESOURCES;
+    }
+    BootOptionCount = 0;
+    for (Index = 0; Index < 2; Index++) {
+      EFI_GUID *FileGuid = Index == 0 ? &mLinuxBootGuid : &mWindowsBootGuid;
+      CHAR16 *Description = Index == 0 ? L"Linux" : L"Windows";
+
+      EfiInitializeFwVolDevicepathNode (&FileNode, FileGuid);
+      DevicePath = AppendDevicePathNode (DevicePathFromHandle (LoadedImage->DeviceHandle), (EFI_DEVICE_PATH_PROTOCOL *)&FileNode);
+      if (DevicePath == NULL) {
+        Status = EFI_NOT_FOUND;
+        break;
+      }
+      Status = EfiBootManagerInitializeLoadOption (
+                 &InternalOptions[BootOptionCount],
+                 LoadOptionNumberUnassigned,
+                 LoadOptionTypeBoot,
+                 LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP,
+                 Description,
+                 DevicePath,
+                 NULL,
+                 0
+                 );
+      FreePool (DevicePath);
+      if (EFI_ERROR (Status)) {
+        break;
+      }
+      BootOptionCount++;
+    }
+    if (EFI_ERROR (Status)) {
+      EfiBootManagerFreeLoadOptions (InternalOptions, BootOptionCount);
+      return Status;
+    }
+    BootOption = InternalOptions;
+  } else {
+    BootOption = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
+  }
 
   if (!mModeInitialized) {
     //

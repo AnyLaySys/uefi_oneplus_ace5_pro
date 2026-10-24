@@ -1,9 +1,6 @@
 #include <Library/DebugLib.h>
 #include <Library/UefiBootServicesTableLib.h>
-#include <Library/UefiRuntimeServicesTableLib.h>
-#include <Library/BootGraphicsLib.h>
 #include <Library/DevicePathLib.h>
-#include <Library/BootGraphics.h>
 #include <Library/UefiLib.h>
 
 #include <Protocol/EFIUsbMsd.h>
@@ -20,8 +17,8 @@ VOID
 PrintUI (IN CHAR8 *Message)
 {
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL Color[2];
-  UINTN                         YPos;
   UINTN                         XPos;
+  UINTN                         YPos;
 
   // Verify Parameter
   if (Message == NULL) {
@@ -34,14 +31,13 @@ PrintUI (IN CHAR8 *Message)
 
   // Calculate Message Position
   XPos = (ScreenWidth - AsciiStrLen (Message) * EFI_GLYPH_WIDTH) / 2;
-  YPos = (ScreenHeight - EFI_GLYPH_HEIGHT) * 48 / 50;
+  YPos = (ScreenHeight - EFI_GLYPH_HEIGHT) / 2;
 
   // Set Draw Colors
   Color[0].Red = Color[0].Green = Color[0].Blue = 0;
   Color[1].Red = Color[1].Green = Color[1].Blue = 255;
 
-  // Clear Message Row
-  mGopProtocol->Blt (mGopProtocol, &Color[0], EfiBltVideoFill, 0, 0, 0, YPos, ScreenWidth, 20, 0);
+  mGopProtocol->Blt (mGopProtocol, &Color[0], EfiBltVideoFill, 0, 0, 0, 0, ScreenWidth, ScreenHeight, 0);
 
   // Print Message
   AsciiPrintXY (XPos, YPos, &Color[1], NULL, Message);
@@ -69,7 +65,7 @@ MassStorageStart ()
   EFI_STATUS Status;
 
   // Show Cancel Instruction
-  PrintUI ("[Volume Up] Exit Mass Storage");
+  PrintUI ("Mass Storage");
 
   // Start USB Device
   Status = mUsbMsdProtocol->StartDevice (mUsbMsdProtocol);
@@ -197,9 +193,6 @@ MassStorageEntry (
 
   // Disable Watchdog Timer
   gBS->SetWatchdogTimer (0, 0, 0, (CHAR16 *)NULL);
-
-  // Show Mass Storage Splash
-  DisplayBootGraphic (BG_MASS_STORAGE);
 
   // Start Mass Storage
   MassStorageStart ();

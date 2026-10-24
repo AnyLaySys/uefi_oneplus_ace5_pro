@@ -1,0 +1,30 @@
+[Defines]
+  INF_VERSION                    = 0x00010005
+  BASE_NAME                      = InternalStorageMenu
+  FILE_GUID                      = B2F146C7-34D6-4CB0-9127-61263EAB7015
+  MODULE_TYPE                    = UEFI_APPLICATION
+  VERSION_STRING                 = 1.0
+  ENTRY_POINT                    = InternalStorageMenuEntry
+
+[Sources]
+  InternalStorageMenu.c
+
+[Packages]
+  hummerPkg/hummer.dec
+  MdePkg/MdePkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+
+[LibraryClasses]
+  UefiApplicationEntryPoint
+  UefiBootManagerLib
+  UefiBootServicesTableLib
+  UefiLib
+  DevicePathLib
+  MemoryAllocationLib
+  PcdLib
+
+[Protocols]
+  gEfiLoadedImageProtocolGuid
+
+[Pcd]
+  gEfiMdeModulePkgTokenSpaceGuid.PcdBootManagerMenuFile

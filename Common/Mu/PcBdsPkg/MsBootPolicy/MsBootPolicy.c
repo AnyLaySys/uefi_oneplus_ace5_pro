@@ -706,16 +706,10 @@ MsBootPolicyEntry (
     Index++;
   }
 
-  // Need to populate GraphicStatus here, otherwise logo function return value will override boot result
   GraphicStatus = SetGraphicsConsoleMode (GCM_NATIVE_RES);
   if (EFI_ERROR (GraphicStatus) != FALSE) {
     DEBUG ((DEBUG_ERROR, "%a Unable to set console mode - %r\n", __FUNCTION__, GraphicStatus));
     goto Done;
-  }
-
-  GraphicStatus = DisplayBootGraphic (BG_SYSTEM_LOGO);
-  if (EFI_ERROR (GraphicStatus) != FALSE) {
-    DEBUG ((DEBUG_ERROR, "%a Unable to set graphics - %r\n", __FUNCTION__, GraphicStatus));
   }
 
 Done:

@@ -169,7 +169,7 @@ PrintFirmwareVersion (VOID)
 
   // Print UEFI Version Message
   DEBUG ((EFI_D_WARN, "\n"));
-  DEBUG ((EFI_D_WARN, "Project Silicium for %a %a\n",            FixedPcdGetPtr (PcdSmbiosSystemManufacturer), FixedPcdGetPtr (PcdSmbiosSystemModel)));
+  DEBUG ((EFI_D_WARN, "UEFI for %a %a\n",                        FixedPcdGetPtr (PcdSmbiosSystemManufacturer), FixedPcdGetPtr (PcdSmbiosSystemModel)));
   DEBUG ((EFI_D_WARN, "Firmware Version %s Build at %a on %a\n", PcdGetPtr (PcdFirmwareVersionString), __TIME__, __DATE__));
   DEBUG ((EFI_D_WARN, "\n"));
 }

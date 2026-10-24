@@ -1,6 +1,6 @@
 [Defines]
   INF_VERSION = 0x00010005
-  BASE_NAME = HummerMassStorage
+  BASE_NAME = MassStorage
   FILE_GUID = 72C91F35-1894-4E2C-8476-66C7275148D5
   MODULE_TYPE = UEFI_APPLICATION
   VERSION_STRING = 1.0
@@ -17,7 +17,6 @@
   BaseMemoryLib
   DevicePathLib
   MemoryAllocationLib
-  PrintLib
   UefiApplicationEntryPoint
   UefiBootServicesTableLib
   UefiLib
@@ -29,3 +28,4 @@
   gEfiUsbMsdProtocolGuid
   gEfiBlockIoProtocolGuid
   gEfiDevicePathProtocolGuid
+  gEfiGraphicsOutputProtocolGuid

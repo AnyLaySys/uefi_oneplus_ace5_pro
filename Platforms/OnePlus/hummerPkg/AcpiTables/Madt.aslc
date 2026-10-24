@@ -1,0 +1,42 @@
+#include "AcpiTables.h"
+
+#pragma pack (1)
+typedef struct {
+  EFI_ACPI_6_4_MULTIPLE_APIC_DESCRIPTION_TABLE_HEADER Header;
+  EFI_ACPI_6_4_GIC_STRUCTURE Cpus[8];
+  EFI_ACPI_6_4_GIC_DISTRIBUTOR_STRUCTURE Distributor;
+} HUMMER_MADT;
+#pragma pack ()
+
+#define HUMMER_GICC(Uid, Mpidr, Class) { \
+  .Type = EFI_ACPI_6_4_GIC, \
+  .Length = sizeof (EFI_ACPI_6_4_GIC_STRUCTURE), \
+  .CPUInterfaceNumber = Uid, .AcpiProcessorUid = Uid, \
+  .Flags = EFI_ACPI_6_4_GIC_ENABLED, .PerformanceInterruptGsiv = 23, \
+  .VGICMaintenanceInterrupt = 25, \
+  .GICRBaseAddress = 0x16080000 + (Uid) * 0x40000, \
+  .MPIDR = Mpidr, .ProcessorPowerEfficiencyClass = Class }
+
+HUMMER_MADT Madt = {
+  .Header.Header = HUMMER_ACPI_HEADER (
+    EFI_ACPI_6_4_MULTIPLE_APIC_DESCRIPTION_TABLE_SIGNATURE,
+    HUMMER_MADT, EFI_ACPI_6_4_MULTIPLE_APIC_DESCRIPTION_TABLE_REVISION),
+  .Cpus = {
+    HUMMER_GICC (0, 0x00000, 0),
+    HUMMER_GICC (1, 0x00100, 0),
+    HUMMER_GICC (2, 0x00200, 0),
+    HUMMER_GICC (3, 0x00300, 0),
+    HUMMER_GICC (4, 0x00400, 0),
+    HUMMER_GICC (5, 0x00500, 0),
+    HUMMER_GICC (6, 0x10000, 1),
+    HUMMER_GICC (7, 0x10100, 1),
+  },
+  .Distributor = {
+    .Type = EFI_ACPI_6_4_GICD,
+    .Length = sizeof (EFI_ACPI_6_4_GIC_DISTRIBUTOR_STRUCTURE),
+    .PhysicalBaseAddress = 0x16000000,
+    .GicVersion = EFI_ACPI_6_4_GIC_V3,
+  },
+};
+
+VOID *CONST ReferenceAcpiTable = &Madt;

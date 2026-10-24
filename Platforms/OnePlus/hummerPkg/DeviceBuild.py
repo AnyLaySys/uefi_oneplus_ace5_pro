@@ -29,9 +29,6 @@ class CommonPlatform ():
         "Mu_Basecore",
         "Silicon/Qualcomm",
         "Silicon/Silicium",
-        "Silicium-ACPI",
-        "Silicium-ACPI/Platforms/OnePlus",
-        "Silicium-ACPI/Silicon/Qualcomm"
     )
 
 

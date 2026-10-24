@@ -53,6 +53,7 @@
   ConfigurationMapLib|hummerPkg/Library/ConfigurationMapLib/ConfigurationMapLib.inf
   DeviceBootManagerLib|hummerPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
   PlatformBootOptionsLib|hummerPkg/Library/PlatformBootOptionsLib/PlatformBootOptionsLib.inf
+  WindowsKernelPatchLib|hummerPkg/Library/WindowsKernelPatchLib/WindowsKernelPatchLib.inf
 
 [Components]
   ArmPkg/Drivers/CpuDxe/CpuDxe.inf {
@@ -64,5 +65,9 @@
       *_CLANGPDB_AARCH64_CC_FLAGS = -DHUMMER_GIC_MASK_UNHANDLED
   }
   hummerPkg/Applications/MassStorage/MassStorage.inf
-  hummerPkg/Applications/HummerLinuxBoot/HummerLinuxBoot.inf
+  hummerPkg/Applications/InternalStorageMenu/InternalStorageMenu.inf
+  hummerPkg/Applications/LinuxBoot/LinuxBoot.inf
+  hummerPkg/Applications/WindowsBoot/WindowsBoot.inf
+  hummerPkg/AcpiTables/AcpiTables.inf
+  Binaries/hummer/External/NtfsDxe/NtfsDxe.inf
 

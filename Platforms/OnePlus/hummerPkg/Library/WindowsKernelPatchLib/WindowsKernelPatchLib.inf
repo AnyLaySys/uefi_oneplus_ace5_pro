@@ -1,0 +1,28 @@
+[Defines]
+  INF_VERSION = 0x00010005
+  BASE_NAME = WindowsKernelPatchLib
+  FILE_GUID = 85698158-E8FB-4376-A2D8-1EC749D79435
+  MODULE_TYPE = UEFI_APPLICATION
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = WindowsKernelPatchLib|UEFI_APPLICATION
+
+[Sources]
+  WindowsKernelPatch.c
+  AmuPatch.S
+  ../../../../../Silicon/Silicium/SiliciumPkg/Library/KernelErrataPatcherLib/Winload.c
+  ../../../../../Silicon/Silicium/SiliciumPkg/Library/KernelErrataPatcherLib/MemoryAttribute.c
+
+[Packages]
+  MdePkg/MdePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
+  hummerPkg/hummer.dec
+
+[LibraryClasses]
+  BaseLib
+  BaseMemoryLib
+  CacheMaintenanceLib
+  DebugLib
+  UefiBootServicesTableLib
+
+[Protocols]
+  gEfiMemoryAttributeProtocolGuid

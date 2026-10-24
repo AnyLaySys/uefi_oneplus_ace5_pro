@@ -53,7 +53,7 @@ BuildFwLoadOption (
   }
 
   // Init Boot Load Option
-  Status = EfiBootManagerInitializeLoadOption (BootOption, LoadOptionNumberUnassigned, LoadOptionTypeBoot, LOAD_OPTION_CATEGORY_APP | LOAD_OPTION_ACTIVE | LOAD_OPTION_HIDDEN, Description, DevicePath, (UINT8 *)Parameter, (Parameter != NULL) ? (UINT32)AsciiStrSize (Parameter) : 0);
+  Status = EfiBootManagerInitializeLoadOption (BootOption, LoadOptionNumberUnassigned, LoadOptionTypeBoot, LOAD_OPTION_CATEGORY_APP | LOAD_OPTION_ACTIVE, Description, DevicePath, (UINT8 *)Parameter, (Parameter != NULL) ? (UINT32)AsciiStrSize (Parameter) : 0);
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "%a: Failed to Initialize Boot Load Option! Status = %r\n", __FUNCTION__, Status));
 
@@ -171,7 +171,6 @@ UINTN
 RegisterFvBootOption (
   IN EFI_GUID *FileGuid,
   IN CHAR16   *Description,
-  IN UINTN     Position,
   IN UINT32    Attributes,
   IN UINT8    *OptionalData, 
   IN UINT32    OptionalDataSize)
@@ -213,7 +212,7 @@ RegisterFvBootOption (
   // Check Boot Option Index
   if (OptionIndex == -1) {
     // Add Boot Load Option Variable
-    Status = EfiBootManagerAddLoadOptionVariable (&NewOption, Position);
+    Status = EfiBootManagerAddLoadOptionVariable (&NewOption, (UINTN)-1);
     if (EFI_ERROR (Status)) {
       DEBUG ((EFI_D_ERROR, "%a: Failed to Add New Boot Load Option Variable! Status = %r\n", __FUNCTION__, Status));
 
@@ -242,23 +241,19 @@ MsBootOptionsLibRegisterDefaultBootOptions ()
   EFI_PLATFORM_BOOT_OPTION *BootOption;
   UINT8                     BootOptionCount;
 
-  // Register Default Boot Options
-  RegisterFvBootOption (&gMsBootPolicyFileGuid,            L"Internal Storage", (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)"SSD", sizeof ("SSD"));
-  RegisterFvBootOption (&gMsBootPolicyFileGuid,            L"USB Storage",      (UINTN)-1, LOAD_OPTION_ACTIVE, (UINT8 *)"USB", sizeof ("USB"));
-  RegisterFvBootOption (FixedPcdGetPtr (PcdUfpLoaderFile), L"FFU Mode",         (UINTN)-1, LOAD_OPTION_HIDDEN, NULL, 0);
-
-  // Get Platform Boot Options
   GetPlatformBootOptions (&BootOption, &BootOptionCount);
 
   // Register Platform Boot Options
-  for (UINT8 i = 0; i < BootOptionCount; i++) {
-    RegisterFvBootOption (BootOption[i].AppGuid, BootOption[i].AppName, (UINTN)-1, BootOption[i].LoadAttribute, NULL, 0);
-  }
-
-  // Free Buffer
   if (BootOption != NULL) {
+    for (UINT8 i = 0; i < BootOptionCount; i++) {
+      RegisterFvBootOption (BootOption[i].AppGuid, BootOption[i].AppName, BootOption[i].LoadAttribute, NULL, 0);
+    }
     FreePool (BootOption);
   }
+
+  // Register Default Boot Options
+  RegisterFvBootOption (&gMsBootPolicyFileGuid, L"USB Storage", LOAD_OPTION_ACTIVE, (UINT8 *)"USB", sizeof ("USB"));
+  RegisterFvBootOption (FixedPcdGetPtr (PcdUfpLoaderFile), L"FFU Mode", LOAD_OPTION_ACTIVE, NULL, 0);
 }
 
 EFI_BOOT_MANAGER_LOAD_OPTION*

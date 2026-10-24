@@ -10,13 +10,10 @@
 #include <Library/AcpiTableUpdateLib.h>
 #include <Library/DeviceBootManagerLib.h>
 #include <Library/PlatformBootManagerLib.h>
-#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/UefiBootServicesTableLib.h>
 #include <Library/SecureBootHandlerLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/MsBootOptionsLib.h>
-#include <Library/BootGraphicsLib.h>
-#include <Library/BootGraphics.h>
 #include <Library/PrintLib.h>
 
 #include <Configuration/BootDevices.h>
@@ -32,7 +29,7 @@ STATIC UINTN YPos = 0;
 //
 // BDS Combo Message
 //
-STATIC CONST CHAR8 *ComboMessage = "[Volume Up] Boot Manager";
+STATIC CONST CHAR8 *ComboMessage = "Vol+ Boot Menu";
 
 VOID
 EFIAPI
@@ -103,12 +100,6 @@ PlatformBootManagerAfterConsole ()
 
   // Post Setup GOP
   PostGopSetup (&GopProtocol);
-
-  // Display Boot Logo
-  Status = DisplayBootGraphic (BG_SYSTEM_LOGO);
-  if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "%a: Failed to Display Boot Logo! Status = %r\n", __FUNCTION__, Status));
-  }
 
   // Register Key Callback
   Status = RegisterKeyCallback ((EFI_DEVICE_PATH_PROTOCOL *)&KeypadDevicePath);
@@ -201,26 +192,16 @@ VOID
 EFIAPI
 PlatformBootManagerUnableToBoot ()
 {
-  EFI_STATUS Status;
+  EFI_STATUS                   Status;
+  EFI_BOOT_MANAGER_LOAD_OPTION LoadOption;
 
-  // Execute Secondary Unable To Boot
-  DeviceBootManagerUnableToBoot ();
-
-  // Display No Boot OS Logo
-  Status = DisplayBootGraphic (BG_NO_BOOT_OS);
+  Status = MsBootOptionsLibGetBootManagerMenu (&LoadOption, NULL);
   if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "%a: Failed to Display No Boot OS Logo! Status = %r\n", __FUNCTION__, Status));
-    Print (L"No Operating System Found! Please make sure that an OS is Installed.\n");
+    return;
   }
 
-  // Wait 10s
-  gBS->Stall (10000000);
-
-  // Shutdown
-  gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-
-  // Do Cpu Dead Loop
-  CpuDeadLoop ();
+  EfiBootManagerBoot (&LoadOption);
+  EfiBootManagerFreeLoadOption (&LoadOption);
 }
 
 VOID

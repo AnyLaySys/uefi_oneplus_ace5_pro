@@ -36,7 +36,7 @@
   # Firmware Details
   #
   gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVersionString|L"4.0"
-  gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVendor|L"Project Silicium"
+  gEfiMdeModulePkgTokenSpaceGuid.PcdFirmwareVendor|L"UEFI"
 
   #
   # Memory
@@ -215,8 +215,8 @@
   # Graphic Libraries
   #
   BmpSupportLib|MdeModulePkg/Library/BaseBmpSupportLib/BaseBmpSupportLib.inf
-  BootGraphicsLib|MsGraphicsPkg/Library/BootGraphicsLib/BootGraphicsLib.inf
-  BootGraphicsProviderLib|SiliciumPkg/Library/BootGraphicsProviderLib/BootGraphicsProviderLib.inf
+  BootGraphicsLib|MsGraphicsPkg/Library/BootGraphicsLibNull/BootGraphicsLib.inf
+  BootGraphicsProviderLib|MsGraphicsPkg/Library/BootGraphicsProviderLibNull/BootGraphicsProviderLib.inf
   FrameBufferBltLib|MdeModulePkg/Library/FrameBufferBltLib/FrameBufferBltLib.inf
   FrameBufferMemDrawLib|MsGraphicsPkg/Library/FrameBufferMemDrawLib/FrameBufferMemDrawLibDxe.inf
   GraphicsConsoleHelperLib|PcBdsPkg/Library/GraphicsConsoleHelperLib/GraphicsConsoleHelper.inf

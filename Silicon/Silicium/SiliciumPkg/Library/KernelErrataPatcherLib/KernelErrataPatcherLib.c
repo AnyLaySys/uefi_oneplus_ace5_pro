@@ -177,6 +177,13 @@ KernelErrataPatcherLibConstructor (
 {
   EFI_STATUS Status;
   EFI_EVENT  ReadyToBootEvent;
+  UINT8     *ShellCode;
+  UINTN      ShellCodeSize;
+
+  GetPlatformShellCode (&ShellCode, &ShellCodeSize);
+  if (ShellCodeSize == 0) {
+    return EFI_SUCCESS;
+  }
 
   // Create Ready To Boot Event
   Status = gBS->CreateEventEx (EVT_NOTIFY_SIGNAL, TPL_CALLBACK, ReadyToBootHandler, NULL, &gEfiEventReadyToBootGuid, &ReadyToBootEvent);

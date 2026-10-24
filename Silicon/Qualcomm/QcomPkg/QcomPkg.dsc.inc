@@ -57,4 +57,6 @@
   #
   # Custom Apps
   #
+!if $(SOC_TYPE) != 0
   QcomPkg/Applications/MassStorage/MassStorage.inf
+!endif
