@@ -24,11 +24,13 @@
   SiliciumPkg/SiliciumPkg.dec
 
 [LibraryClasses]
+  BaseLib
   PcdLib
   DebugLib
   AcpiTableUpdateLib
   DeviceBootManagerLib
   UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
   SecureBootHandlerLib
   MemoryAllocationLib
   MsBootOptionsLib

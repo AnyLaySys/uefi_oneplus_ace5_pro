@@ -29,7 +29,7 @@ STATIC UINTN YPos = 0;
 //
 // BDS Combo Message
 //
-STATIC CONST CHAR8 *ComboMessage = "Vol+ Boot Menu";
+STATIC CONST CHAR8 *ComboMessage = "Vol- Power Off";
 
 VOID
 EFIAPI
@@ -138,16 +138,9 @@ PlatformBootManagerPriorityBoot (IN OUT UINT16 **BootNext)
 {
   EFI_STATUS                   Status;
   EFI_BOOT_MANAGER_LOAD_OPTION LoadOption;
-  BOOLEAN                      BootManagerFlag;
 
   // Unregister Key Callback
   UnregisterKeyCallback ();
-
-  // Get Boot Manager Flag
-  BootManagerFlag = EnterBootManager ();
-  if (BootManagerFlag == FALSE) {
-    return;
-  }
 
   // Get Boot Manager Load Option
   Status = MsBootOptionsLibGetBootManagerMenu (&LoadOption, NULL);

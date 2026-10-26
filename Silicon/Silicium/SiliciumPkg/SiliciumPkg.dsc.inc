@@ -504,5 +504,5 @@
   #
   # UEFI Applications
   #
-  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+  MdeModulePkg/Application/BootMenu/BootMenu.inf
   SiliciumPkg/Applications/UFPLoader/UFPLoader.inf

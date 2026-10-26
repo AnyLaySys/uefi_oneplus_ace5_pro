@@ -401,7 +401,7 @@
   MdeModulePkg/Library/IoMmuLibNull/IoMmuLibNull.inf                              # MU_CHANGE
 
   MdeModulePkg/Universal/BdsDxe/BdsDxe.inf
-  MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+  MdeModulePkg/Application/BootMenu/BootMenu.inf
   MdeModulePkg/Application/UiApp/UiApp.inf{
     <LibraryClasses>
       NULL|MdeModulePkg/Library/DeviceManagerUiLib/DeviceManagerUiLib.inf

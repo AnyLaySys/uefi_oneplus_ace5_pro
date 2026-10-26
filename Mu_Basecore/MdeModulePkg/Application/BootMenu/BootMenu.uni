@@ -1,5 +1,5 @@
 // /** @file
-// The application to show the Boot Manager Menu.
+// The application to show the Boot Menu.
 //
 // The application pops up a menu showing all the boot options referenced by
 // BootOrder NV variable and user can choose to boot from one of them.
@@ -11,7 +11,7 @@
 // **/
 
 
-#string STR_MODULE_ABSTRACT             #language en-US "The application to show the Boot Manager Menu"
+#string STR_MODULE_ABSTRACT             #language en-US "The application to show the Boot Menu."
 
 #string STR_MODULE_DESCRIPTION          #language en-US "The application pops up a menu showing all the boot options referenced by BootOrder NV variable and user can choose to boot from one of them."
 

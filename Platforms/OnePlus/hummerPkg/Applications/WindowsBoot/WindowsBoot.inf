@@ -33,6 +33,7 @@
 
 [Protocols]
   gEfiClockProtocolGuid
+  gEfiLoadedImageProtocolGuid
   gEfiPartitionInfoProtocolGuid
   gEfiSimpleFileSystemProtocolGuid
   gEfiUsbMsdProtocolGuid

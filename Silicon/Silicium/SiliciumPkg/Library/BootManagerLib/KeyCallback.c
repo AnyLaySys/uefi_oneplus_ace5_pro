@@ -3,8 +3,10 @@
   SPDX-License-Identifier: BSD-2-Clause-Patent
 **/
 
+#include <Library/BaseLib.h>
 #include <Library/DebugLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/DevicePathLib.h>
 
@@ -17,14 +19,14 @@
 //
 STATIC EFI_SIMPLE_TEXT_INPUT_EX_PROTOCOL *mSimpleInExProtocol  = NULL;
 STATIC VOID                              *mNotifyHandle        = NULL;
-STATIC BOOLEAN                            mEnterBootManager    = FALSE;
 
 EFI_STATUS
 EFIAPI
-KeyNotify (IN EFI_KEY_DATA *KeyData)
+PowerOffNotify (IN EFI_KEY_DATA *KeyData)
 {
-  // Toggle Boot Manager Flag
-  mEnterBootManager = TRUE;
+  gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
+
+  CpuDeadLoop ();
 
   return EFI_SUCCESS;
 }
@@ -82,12 +84,12 @@ RegisterKeyNotify ()
   KeyData.KeyState.KeyToggleState = 0;
   KeyData.KeyState.KeyShiftState  = 0;
   KeyData.Key.UnicodeChar         = CHAR_NULL;
-  KeyData.Key.ScanCode            = SCAN_UP;
+  KeyData.Key.ScanCode            = SCAN_DOWN;
 
-  // Register Volume Up Key Notify
-  Status = mSimpleInExProtocol->RegisterKeyNotify (mSimpleInExProtocol, &KeyData, &KeyNotify, &mNotifyHandle);
+  // Register Volume Down Key Notify
+  Status = mSimpleInExProtocol->RegisterKeyNotify (mSimpleInExProtocol, &KeyData, &PowerOffNotify, &mNotifyHandle);
   if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "%a: Failed to Register Volume Up Key Notify! Status = %r\n", __FUNCTION__, Status));
+    DEBUG ((EFI_D_ERROR, "%a: Failed to Register Volume Down Key Notify! Status = %r\n", __FUNCTION__, Status));
     return Status;
   }
 
@@ -123,17 +125,9 @@ UnregisterKeyCallback ()
   if (mSimpleInExProtocol == NULL || mNotifyHandle == NULL) {
     return;
   }
-
-  // Unregister Volume Up Key Notify
+  // Unregister Volume Down Key Notify
   Status = mSimpleInExProtocol->UnregisterKeyNotify (mSimpleInExProtocol, mNotifyHandle);
   if (EFI_ERROR (Status)) {
-    DEBUG ((EFI_D_ERROR, "%a: Failed to Unregister Volume Up Key Notify! Status = %r\n", __FUNCTION__, Status));
+    DEBUG ((EFI_D_ERROR, "%a: Failed to Unregister Volume Down Key Notify! Status = %r\n", __FUNCTION__, Status));
   }
-}
-
-BOOLEAN
-EnterBootManager ()
-{
-  // Pass Boot Manager Flag
-  return mEnterBootManager;
 }

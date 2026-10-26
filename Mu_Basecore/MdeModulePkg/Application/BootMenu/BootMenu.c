@@ -9,12 +9,13 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <BootOptions.h>
 
-#include "BootManagerMenu.h"
+#include "BootMenu.h"
 
 EFI_HII_HANDLE  gStringPackHandle;
 
 STATIC EFI_GUID  mLinuxBootGuid   = HUMMER_LINUX_BOOT_FILE_GUID;
 STATIC EFI_GUID  mWindowsBootGuid = HUMMER_WINDOWS_BOOT_FILE_GUID;
+STATIC EFI_GUID  mGenericBootGuid = HUMMER_WINDOWS_BOOT_FILE_GUID;
 
 BOOLEAN  mModeInitialized = FALSE;
 BOOLEAN  mInternalStorageMenu = FALSE;
@@ -410,6 +411,8 @@ InitializeBootMenuData (
   if (!mInternalStorageMenu) {
     BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Power Off", NULL);
     BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Exit", NULL);
+  } else {
+    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Back", NULL);
   }
 
   BootMenuData->ItemCount    = StrIndex;
@@ -767,13 +770,18 @@ BootFromSelectOption (
     }
   }
 
+  // Back
+  if (mInternalStorageMenu && (SelectItem == ItemNum)) {
+    gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
+  }
+
   // Power Off
-  if (SelectItem == ItemNum) {
+  if (!mInternalStorageMenu && (SelectItem == ItemNum)) {
     gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
   }
 
   // Exit
-  if (SelectItem == ItemNum + 1) {
+  if (!mInternalStorageMenu && (SelectItem == ItemNum + 1)) {
     gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
   }
 }
@@ -1010,7 +1018,7 @@ BdsSetConsoleMode (
 **/
 EFI_STATUS
 EFIAPI
-BootManagerMenuEntry (
+BootMenuEntry (
   IN EFI_HANDLE        ImageHandle,
   IN EFI_SYSTEM_TABLE  *SystemTable
   )
@@ -1049,7 +1057,7 @@ BootManagerMenuEntry (
   gStringPackHandle = HiiAddPackages (
                         &gEfiCallerIdGuid,
                         gImageHandle,
-                        BootManagerMenuAppStrings,
+                        BootMenuStrings,
                         NULL
                         );
   ASSERT (gStringPackHandle != NULL);
@@ -1070,14 +1078,18 @@ BootManagerMenuEntry (
 
   if (InternalStorage) {
     mInternalStorageMenu = TRUE;
-    InternalOptions = AllocateZeroPool (2 * sizeof (*InternalOptions));
+    InternalOptions = AllocateZeroPool (3 * sizeof (*InternalOptions));
     if (InternalOptions == NULL) {
       return EFI_OUT_OF_RESOURCES;
     }
     BootOptionCount = 0;
-    for (Index = 0; Index < 2; Index++) {
-      EFI_GUID *FileGuid = Index == 0 ? &mLinuxBootGuid : &mWindowsBootGuid;
-      CHAR16 *Description = Index == 0 ? L"Linux" : L"Windows";
+    for (Index = 0; Index < 3; Index++) {
+      EFI_GUID *FileGuid = (Index == 0) ? &mGenericBootGuid
+                         : (Index == 1) ? &mLinuxBootGuid : &mWindowsBootGuid;
+      CHAR16 *Description = (Index == 0) ? L"Generic"
+                          : (Index == 1) ? L"Linux" : L"Windows";
+      CHAR8 *Parameter = (Index == 0) ? HUMMER_GENERIC_BOOT_OPTION
+                       : (Index == 1) ? NULL : HUMMER_WINDOWS_BOOT_OPTION;
 
       EfiInitializeFwVolDevicepathNode (&FileNode, FileGuid);
       DevicePath = AppendDevicePathNode (DevicePathFromHandle (LoadedImage->DeviceHandle), (EFI_DEVICE_PATH_PROTOCOL *)&FileNode);
@@ -1092,8 +1104,8 @@ BootManagerMenuEntry (
                  LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP,
                  Description,
                  DevicePath,
-                 NULL,
-                 0
+                 (UINT8 *)Parameter,
+                 (Parameter != NULL) ? (UINT32)AsciiStrSize (Parameter) : 0
                  );
       FreePool (DevicePath);
       if (EFI_ERROR (Status)) {

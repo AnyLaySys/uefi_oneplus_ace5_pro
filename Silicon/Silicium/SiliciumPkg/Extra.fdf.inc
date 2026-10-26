@@ -7,7 +7,7 @@
   #
   # UEFI Applications
   #
-  INF MdeModulePkg/Application/BootManagerMenuApp/BootManagerMenuApp.inf
+  INF MdeModulePkg/Application/BootMenu/BootMenu.inf
   INF PcBdsPkg/MsBootPolicy/MsBootPolicy.inf
   INF SiliciumPkg/Applications/UFPLoader/UFPLoader.inf
   INF SiliciumPkg/Applications/UFP/ufpdevicefw.inf
