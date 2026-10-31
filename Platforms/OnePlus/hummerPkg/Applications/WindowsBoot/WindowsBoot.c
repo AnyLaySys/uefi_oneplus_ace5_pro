@@ -21,6 +21,7 @@
 #include <Protocol/SimpleFileSystem.h>
 #include <BootOptions.h>
 #include <LinuxPayload.h>
+#include "Pcie0.h"
 
 STATIC EFI_GUID mPayloadGuid = HUMMER_LINUX_PAYLOAD_HOB_GUID;
 
@@ -213,6 +214,8 @@ WindowsBootEntry (
   UINTN BlockCount;
   UINTN Index;
   UINTN FileIndex;
+  UINTN LoaderCount;
+  CONST CHAR16 *LoaderName;
   EFI_DEVICE_PATH_PROTOCOL *DevicePath;
   EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
   BOOLEAN Generic;
@@ -229,7 +232,6 @@ WindowsBootEntry (
   if (EFI_ERROR (Status)) {
     return Status;
   }
-
   Status = gBS->LocateProtocol (&gEfiUsbMsdProtocolGuid, NULL, (VOID **)&Msd);
   if (!EFI_ERROR (Status) && Msd->StopDevice != NULL) {
     Status = Msd->StopDevice (Msd);
@@ -270,33 +272,30 @@ WindowsBootEntry (
     return Status;
   }
 
+  Pcie0Initialize (Handles, Count);
+  AdspInitialize (Handles, Count);
+
+  //
+  // The Windows kernel compatibility patch is applied on both paths: the
+  // generic path only differs in the loader file name, not in the patch.
+  // A single call site keeps the patch argument out of the compiler's reach.
+  //
   Status = EFI_NOT_FOUND;
-  if (Generic) {
-    for (Index = 0; Index < Count; Index++) {
-      DevicePath = DevicePathFromHandle (Handles[Index]);
-      if (DevicePath == NULL || MsBootPolicyLibIsDevicePathUsb (DevicePath)) {
-        continue;
-      }
-      Status = TryBootFile (ImageHandle, Handles[Index], L"\\EFI\\BOOT\\BOOTAA64.EFI", FALSE);
+  for (Index = 0; Index < Count; Index++) {
+    DevicePath = DevicePathFromHandle (Handles[Index]);
+    if (DevicePath == NULL || MsBootPolicyLibIsDevicePathUsb (DevicePath)) {
+      continue;
+    }
+    LoaderCount = Generic ? 1 : ARRAY_SIZE (WindowsBootFiles);
+    for (FileIndex = 0; FileIndex < LoaderCount; FileIndex++) {
+      LoaderName = Generic ? L"\\EFI\\BOOT\\BOOTAA64.EFI" : WindowsBootFiles[FileIndex];
+      Status     = TryBootFile (ImageHandle, Handles[Index], LoaderName, TRUE);
       if (!EFI_ERROR (Status)) {
         break;
       }
     }
-  } else {
-    for (Index = 0; Index < Count; Index++) {
-      DevicePath = DevicePathFromHandle (Handles[Index]);
-      if (DevicePath == NULL || MsBootPolicyLibIsDevicePathUsb (DevicePath)) {
-        continue;
-      }
-      for (FileIndex = 0; FileIndex < ARRAY_SIZE (WindowsBootFiles); FileIndex++) {
-        Status = TryBootFile (ImageHandle, Handles[Index], WindowsBootFiles[FileIndex], TRUE);
-        if (!EFI_ERROR (Status)) {
-          break;
-        }
-      }
-      if (!EFI_ERROR (Status)) {
-        break;
-      }
+    if (!EFI_ERROR (Status)) {
+      break;
     }
   }
 

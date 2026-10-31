@@ -14,8 +14,8 @@
 #string STR_BOOT_POPUP_MENU_TITLE_STRING  #language    en-US    "Boot Menu"
                                           #language    fr-FR    "Boot Menu"
 
-#string STR_BOOT_POPUP_MENU_HELP1_STRING  #language    en-US    "Vol+/- Move"
-                                          #language    fr-FR    "Vol+/- Move"
+#string STR_BOOT_POPUP_MENU_HELP1_STRING  #language    en-US    "Vol Move"
+                                          #language    fr-FR    "Vol Move"
 
 #string STR_BOOT_POPUP_MENU_HELP2_STRING  #language    en-US    "Pwr Select"
                                           #language    fr-FR    "Pwr Select"

@@ -8,6 +8,9 @@
 
 [Sources]
   WindowsBoot.c
+  Pcie0.c
+  Pcie0.h
+  Adsp.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -19,15 +22,19 @@
 [LibraryClasses]
   BaseLib
   BaseMemoryLib
+  CacheMaintenanceLib
   IoLib
   DevicePathLib
+  DxeServicesTableLib
   FdtLib
   HobLib
   MemoryAllocationLib
   MsBootPolicyLib
+  PrintLib
   UefiApplicationEntryPoint
   UefiBootManagerLib
   UefiBootServicesTableLib
+  UefiRuntimeServicesTableLib
   UefiLib
   WindowsKernelPatchLib
 
@@ -38,7 +45,9 @@
   gEfiSimpleFileSystemProtocolGuid
   gEfiUsbMsdProtocolGuid
   gEfiUsbfnIoProtocolGuid
+  gQcomScmProtocolGuid
 
 [Guids]
   gUsbControllerInitGuid
   gFdtTableGuid
+  gEfiFileInfoGuid
