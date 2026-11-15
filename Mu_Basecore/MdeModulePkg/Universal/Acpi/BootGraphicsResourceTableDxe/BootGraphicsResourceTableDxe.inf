@@ -28,6 +28,7 @@
 [Packages]
   MdePkg/MdePkg.dec
   MdeModulePkg/MdeModulePkg.dec
+  SiliciumPkg/SiliciumPkg.dec
 
 [LibraryClasses]
   UefiDriverEntryPoint
@@ -45,6 +46,7 @@
   gEfiAcpiTableProtocolGuid                     ## CONSUMES
   gEfiBootLogoProtocolGuid                      ## PRODUCES
   gEdkiiBootLogo2ProtocolGuid                   ## PRODUCES
+  gPreservedBootLogoProtocolGuid               ## SOMETIMES_CONSUMES
 
 [Pcd]
   gEfiMdeModulePkgTokenSpaceGuid.PcdAcpiDefaultOemId            ## CONSUMES

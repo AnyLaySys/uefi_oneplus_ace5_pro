@@ -689,6 +689,7 @@
   gEdkiiPeiMigrateTempRamPpiGuid            = { 0xc79dc53b, 0xafcd, 0x4a6a, { 0xad, 0x94, 0xa7, 0x6a, 0x3f, 0xa9, 0xe9, 0xc2 } }
 
 [Protocols]
+  gConsoleFontProtocolGuid = { 0xF5F219D3, 0x7006, 0x4648, { 0xAC, 0x8D, 0xD6, 0x1D, 0xFB, 0x7B, 0xC6, 0xAD } }
   ## Load File protocol provides capability to load and unload EFI image into memory and execute it.
   #  Include/Protocol/LoadPe32Image.h
   #  This protocol is deprecated. Native EDKII module should NOT use this protocol to load/unload image.

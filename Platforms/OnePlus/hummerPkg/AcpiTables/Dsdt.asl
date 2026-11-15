@@ -1,20 +1,5 @@
-/*
- * hummer (OnePlus Ace 5 Pro, SM8750) DSDT -- touch controller and WCN7861 bring-up.
- *
- * The touch node deliberately does NOT use SpiSerialBus/GpioInt resources:
- * none of the three kernel drivers those would require (Qualcomm GENI SPI,
- * TLMM GPIO, GIC SPI interrupt) exist for Windows on this platform. The node
- * therefore hands the driver the raw register windows it needs and lets it
- * drive the serial engine, the GPI DMA rings, the pin mux and the PMIC rails
- * itself. Addresses and pin numbers come from the board DT:
- *   sm8750.dtsi spi4                 @0x00A90000 (+0x4000)
- *   sm8750.dtsi gpi_dma1             @0x00A00000 (+0x60000)
- *   sm8750.dtsi pinctrl@f100000      (+0x102000)
- *   sm8750-oneplus-hummer-bringup.dtsi touchscreen@0:
- *       spi-max-frequency 19000000, reset tlmm 161, irq tlmm 162,
- *       vddio vreg_l4b_1p8 (1.8V), avdd vreg_l16b_2p8 (3.104V)
- * Panel geometry 1264 x 2780 (TouchComm mx12639 / my27799 in 0.1 px units).
- */
+#define GPU_IRQ(n) Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { n }
+
 DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
 {
     Scope (\_SB)
@@ -28,15 +13,6 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
         Device (CPU6) { Name (_HID, "ACPI0007") Name (_UID, 6) }
         Device (CPU7) { Name (_HID, "ACPI0007") Name (_UID, 7) }
 
-        //
-        // WCN7861 (PEACH, 17cb:110e) on PCIe0. Windows cannot enumerate the
-        // DWC root complex through ECAM, so WindowsBoot (Pcie0.c) trains the
-        // link, assigns BAR0 and sets up the DWC internal MSI controller, and
-        // this node hands the driver the raw windows:
-        //   BAR0 (Pcie0.c BAR0_BASE), endpoint config (iATU CFG0 to 01:00.0),
-        //   root port DBI (iMSI-RX at +0x820), PARF.
-        // Interrupt is msi0 (SPI 141) from sm8750.dtsi pcie@1c00000.
-        //
         Device (WLN0)
         {
             Name (_HID, "HMRW7861")
@@ -172,6 +148,137 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             Name (_CRS, ResourceTemplate ()
             {
                 Memory32Fixed (ReadWrite, 0x00990000, 0x00004000)
+            })
+
+            Method (_STA, 0, NotSerialized)
+            {
+                Return (0x0F)
+            }
+        }
+
+        Device (BTH0)
+        {
+            Name (_HID, "HMRB7861")
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x00898000, 0x00004000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
+                {
+                    493
+                }
+            })
+            Method (_STA, 0, NotSerialized)
+            {
+                Return (0x0F)
+            }
+        }
+
+        Device (USB0)
+        {
+            Name (_HID, "PNP0D10")
+            Name (_UID, 0)
+            Name (_CCA, 1)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x0A600000, 0x00008000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 165 }
+            })
+
+            OperationRegion (UCLK, SystemMemory, 0x00139000, 0x90)
+            Field (UCLK, DWordAcc, NoLock, Preserve)
+            {
+                Offset (0x08), , 16, PWUP, 1,
+                Offset (0x18), , 31, CHLT, 1,
+                Offset (0x8C), , 31, AHLT, 1
+            }
+            OperationRegion (UCOR, SystemMemory, 0x0A60C100, 0x610)
+            Field (UCOR, DWordAcc, NoLock, Preserve)
+            {
+                Offset (0x10), , 12, ROLE, 2,
+                Offset (0x604), , 31, DRUN, 1,
+                Offset (0x60C), , 22, DHLT, 1
+            }
+
+            Method (_STA, 0, NotSerialized)
+            {
+                If (LAnd (PWUP, LAnd (LNot (CHLT), LNot (AHLT))))
+                {
+                    If (LAnd (LNot (DRUN), DHLT)) { Return (0x0F) }
+                }
+                Return (Zero)
+            }
+            Method (_INI, 0, Serialized)
+            {
+                If (LEqual (_STA (), 0x0F)) { Store (One, ROLE) }
+            }
+        }
+
+        Device (GPU0)
+        {
+            Name (_HID, "HMRG0830")
+            Name (_UID, 0)
+            Name (_CCA, 1)
+            Name (ZPRD, Zero)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x03D00000, 0x000E0000)
+                GPU_IRQ (332)
+                GPU_IRQ (336)
+                GPU_IRQ (337)
+                GPU_IRQ (706)
+                GPU_IRQ (710)
+                GPU_IRQ (711)
+                GPU_IRQ (712)
+                GPU_IRQ (713)
+                GPU_IRQ (714)
+                GPU_IRQ (715)
+                GPU_IRQ (716)
+                GPU_IRQ (717)
+                GPU_IRQ (718)
+                GPU_IRQ (719)
+                GPU_IRQ (720)
+                GPU_IRQ (454)
+                GPU_IRQ (508)
+                GPU_IRQ (606)
+                GPU_IRQ (607)
+                GPU_IRQ (608)
+                GPU_IRQ (609)
+                GPU_IRQ (692)
+                GPU_IRQ (694)
+                GPU_IRQ (697)
+                GPU_IRQ (698)
+                GPU_IRQ (699)
+                GPU_IRQ (701)
+                GPU_IRQ (702)
+                GPU_IRQ (732)
+            })
+            Name (_DSD, Package ()
+            {
+                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
+                Package ()
+                {
+                    Package () { "chip-id", 0x44050001 },
+                    Package () { "zap-base", 0x9B09A000 },
+                    Package () { "zap-size", 0x2000 },
+                    Package () { "pas-id", 13 }
+                }
+            })
+            Method (_STA, 0, NotSerialized)
+            {
+                Return (ZPRD * 0x0F)
+            }
+        }
+
+        Device (BAT0)
+        {
+            Name (_HID, "HMRB0001")
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x00984000, 0x00004000)
             })
 
             Method (_STA, 0, NotSerialized)

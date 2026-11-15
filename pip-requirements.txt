@@ -18,3 +18,4 @@ antlr4-python3-runtime==4.13.2
 regex==2026.9.10
 pefile~=2024.8.26
 coloredlogs
+Pillow==13.0.0

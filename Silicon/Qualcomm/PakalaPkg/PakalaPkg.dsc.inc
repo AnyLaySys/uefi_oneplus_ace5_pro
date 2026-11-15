@@ -55,7 +55,7 @@
   # SMBIOS
   #
 !if ($(SOC_TYPE) == 0 || $(SOC_TYPE) == 1)
-  gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorModel|"Snapdragon (TM) 8 Elite @ 4.32 GHz"
+  gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorModel|"Qualcomm Snapdragon 8 Elite"
 !if $(SOC_TYPE) == 0
   gSiliciumPkgTokenSpaceGuid.PcdSmbiosProcessorPartNumber|"SM8750-AB"
 !elseif $(SOC_TYPE) == 1

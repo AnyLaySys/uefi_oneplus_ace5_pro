@@ -19,6 +19,7 @@
   PcBdsPkg/PcBdsPkg.dec
   MdeModulePkg/MdeModulePkg.dec
   SiliciumPkg/SiliciumPkg.dec
+  hummerPkg/hummer.dec
 
 [LibraryClasses]
   DebugLib

@@ -5,13 +5,73 @@
 #include <Library/MemoryMapHelperLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/PcdLib.h>
+#include <Library/UefiLib.h>
 
 #include <Configuration/BootDevices.h>
+#include <Protocol/PreservedBootLogo.h>
 
 //
 // Global Variables
 //
 STATIC FRAME_BUFFER_CONFIGURE *FrameBufferConfiguration;
+STATIC EFI_GRAPHICS_OUTPUT_BLT_PIXEL *mBootScreen;
+STATIC VOID EFIAPI RestoreBootLogo (VOID);
+STATIC EFI_PRESERVED_BOOT_LOGO_PROTOCOL mPreservedBootLogo = {RestoreBootLogo};
+
+STATIC VOID
+CaptureBootLogo (IN EFI_GRAPHICS_OUTPUT_PROTOCOL *Gop)
+{
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Buffer;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL *Pixel;
+  EFI_STATUS Status;
+  UINTN Width;
+  UINTN Height;
+  UINTN Left;
+  UINTN Top;
+  UINTN Right = 0;
+  UINTN Bottom = 0;
+  UINTN X;
+  UINTN Y;
+
+  Width = Gop->Mode->Info->HorizontalResolution;
+  Height = Gop->Mode->Info->VerticalResolution;
+  if (Width == 0 || Height == 0 || Width > MAX_UINTN / Height / sizeof (*Buffer)) {
+    return;
+  }
+  Buffer = AllocatePool (Width * Height * sizeof (*Buffer));
+  if (Buffer == NULL) {
+    return;
+  }
+  Status = Gop->Blt (Gop, Buffer, EfiBltVideoToBltBuffer, 0, 0, 0, 0, Width, Height, 0);
+  if (EFI_ERROR (Status)) {
+    FreePool (Buffer);
+    return;
+  }
+  Left = Width;
+  Top = Height;
+  for (Y = 0; Y < Height; Y++) {
+    for (X = 0; X < Width; X++) {
+      Pixel = &Buffer[Y * Width + X];
+      if (Pixel->Red == 0 && Pixel->Green == 0 && Pixel->Blue == 0) {
+        continue;
+      }
+      Left = MIN (Left, X);
+      Top = MIN (Top, Y);
+      Right = MAX (Right, X);
+      Bottom = MAX (Bottom, Y);
+    }
+  }
+  if (Left == Width) {
+    FreePool (Buffer);
+    return;
+  }
+  mBootScreen = Buffer;
+  mPreservedBootLogo.X = (UINT32)Left;
+  mPreservedBootLogo.Y = (UINT32)Top;
+  mPreservedBootLogo.Width = (UINT32)(Right - Left + 1);
+  mPreservedBootLogo.Height = (UINT32)(Bottom - Top + 1);
+  mPreservedBootLogo.Stride = (UINT32)Width;
+}
 
 EFI_STATUS
 FrameBufferQueryMode (
@@ -83,6 +143,19 @@ STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL mFrameBuffer = {
   FrameBufferGopBlt,
   NULL
 };
+
+STATIC VOID EFIAPI
+RestoreBootLogo (VOID)
+{
+  UINTN Width = mFrameBuffer.Mode->Info->HorizontalResolution;
+
+  if (mBootScreen == NULL || EFI_ERROR (mFrameBuffer.Blt (&mFrameBuffer, mBootScreen,
+        EfiBltBufferToVideo, 0, 0, 0, 0, Width, mFrameBuffer.Mode->Info->VerticalResolution, 0))) {
+    return;
+  }
+  mPreservedBootLogo.BltBuffer = &mBootScreen[mPreservedBootLogo.Y * Width + mPreservedBootLogo.X];
+  EfiSignalEventReadyToBoot ();
+}
 
 EFI_STATUS
 GetFrameBufferInfos (
@@ -251,6 +324,11 @@ FreeMemoryBuffers ()
   if (FrameBufferConfiguration != NULL) {
     FreePool (FrameBufferConfiguration);
   }
+  if (mBootScreen != NULL) {
+    FreePool (mBootScreen);
+    mBootScreen = NULL;
+    mPreservedBootLogo.BltBuffer = NULL;
+  }
 }
 
 EFI_STATUS
@@ -289,11 +367,16 @@ RegisterFrameBuffer (
     goto cleanup;
   }
 
-  // Register GOP Protocol
-  Status = gBS->InstallMultipleProtocolInterfaces (&ImageHandle, &gEfiDevicePathProtocolGuid, &DisplayDevicePath, &gEfiGraphicsOutputProtocolGuid, &mFrameBuffer, NULL);
+  CaptureBootLogo (&mFrameBuffer);
+
+  Status = gBS->InstallMultipleProtocolInterfaces (
+    &ImageHandle, &gEfiDevicePathProtocolGuid, &DisplayDevicePath,
+    &gEfiGraphicsOutputProtocolGuid, &mFrameBuffer,
+    &gPreservedBootLogoProtocolGuid, &mPreservedBootLogo, NULL);
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "Failed to Register GOP Protocol!\n"));
     ASSERT_EFI_ERROR (Status);
+    goto cleanup;
   }
 
   return EFI_SUCCESS;

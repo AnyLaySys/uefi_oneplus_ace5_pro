@@ -442,6 +442,7 @@ TranslateBmpToGopBlt (
   @param [in]      GopBlt        Pointer to GOP blt buffer.
   @param [in]      PixelHeight   Height of GopBlt/BmpImage in pixels.
   @param [in]      PixelWidth    Width of GopBlt/BmpImage in pixels.
+  @param [in]      PixelStride   Distance between source rows in pixels.
   @param [in, out] BmpImage      Buffer containing BMP version of GopBlt.
   @param [in, out] BmpImageSize  Size of BmpImage in bytes.
 
@@ -458,28 +459,39 @@ TranslateBmpToGopBlt (
 **/
 RETURN_STATUS
 EFIAPI
-TranslateGopBltToBmp (
-  IN     EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *GopBlt,
-  IN     UINT32                         PixelHeight,
-  IN     UINT32                         PixelWidth,
-  IN OUT VOID                           **BmpImage,
-  IN OUT UINT32                         *BmpImageSize
+TranslateGopBltToBmpWithStride (
+  IN     CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *GopBlt,
+  IN     UINT32                             PixelHeight,
+  IN     UINT32                             PixelWidth,
+  IN     UINT32                             PixelStride,
+  IN OUT VOID                               **BmpImage,
+  IN OUT UINT32                             *BmpImageSize
   )
 {
-  RETURN_STATUS                  Status;
-  UINT32                         PaddingSize;
-  UINT32                         BmpSize;
-  BMP_IMAGE_HEADER               *BmpImageHeader;
-  UINT8                          *Image;
-  UINTN                          Col;
-  UINTN                          Row;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *BltPixel;
+  RETURN_STATUS                       Status;
+  UINT32                              PaddingSize;
+  UINT32                              BmpSize;
+  BMP_IMAGE_HEADER                    *BmpImageHeader;
+  UINT8                               *Image;
+  UINTN                               Col;
+  UINTN                               Row;
+  CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *BltPixel;
+  UINTN                               SourceSize;
 
   if ((GopBlt == NULL) || (BmpImage == NULL) || (BmpImageSize == NULL)) {
     return RETURN_INVALID_PARAMETER;
   }
 
   if ((PixelHeight == 0) || (PixelWidth == 0)) {
+    return RETURN_UNSUPPORTED;
+  }
+
+  if (PixelStride < PixelWidth) {
+    return RETURN_INVALID_PARAMETER;
+  }
+
+  Status = SafeUintnMult (PixelStride, PixelHeight, &SourceSize);
+  if (RETURN_ERROR (Status) || (SourceSize > MAX_UINTN / sizeof (*GopBlt))) {
     return RETURN_UNSUPPORTED;
   }
 
@@ -566,7 +578,7 @@ TranslateGopBltToBmp (
   //
   Image = (UINT8 *)BmpImageHeader + sizeof (BMP_IMAGE_HEADER);
   for (Row = 0; Row < PixelHeight; Row++) {
-    BltPixel = &GopBlt[(PixelHeight - Row - 1) * PixelWidth];
+    BltPixel = &GopBlt[(UINTN)(PixelHeight - Row - 1) * PixelStride];
 
     for (Col = 0; Col < PixelWidth; Col++) {
       *Image++ = BltPixel->Blue;
@@ -582,4 +594,17 @@ TranslateGopBltToBmp (
   }
 
   return RETURN_SUCCESS;
+}
+
+RETURN_STATUS
+EFIAPI
+TranslateGopBltToBmp (
+  IN     EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *GopBlt,
+  IN     UINT32                         PixelHeight,
+  IN     UINT32                         PixelWidth,
+  IN OUT VOID                           **BmpImage,
+  IN OUT UINT32                         *BmpImageSize
+  )
+{
+  return TranslateGopBltToBmpWithStride (GopBlt, PixelHeight, PixelWidth, PixelWidth, BmpImage, BmpImageSize);
 }

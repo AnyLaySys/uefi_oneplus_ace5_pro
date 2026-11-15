@@ -116,6 +116,22 @@ PlatformUpdateSmBiosTables (IN OUT EFI_SMBIOS_TABLES *SmBiosTables)
   PlatformUpdateSmBiosType1  (SmBiosTables->Type1);
   PlatformUpdateSmBiosType4  (SmBiosTables->Type4);
   PlatformUpdateSmBiosType17 (SmBiosTables->Type17);
+
+  if (SmBiosTables->Type4->Table.CoreCount == 8 &&
+      AsciiStrCmp (SmBiosTables->Type4->Strings[5], "SM8750-AB") == 0) {
+    EFI_SMBIOS_TYPE7 *Caches[] = {
+      SmBiosTables->Type7_L1I, SmBiosTables->Type7_L1D,
+      SmBiosTables->Type7_L2, SmBiosTables->Type7_L3
+    };
+    CONST UINT32 Sizes[] = { 6 * 128 + 2 * 192, 6 * 64 + 2 * 96, 2 * 12288, 0 };
+    UINTN Index;
+
+    for (Index = 0; Index < ARRAY_SIZE (Caches); Index++) {
+      Caches[Index]->Table.MaximumCacheSize = Caches[Index]->Table.InstalledSize = (SMBIOS_CACHE_SIZE){Sizes[Index], 0};
+      Caches[Index]->Table.MaximumCacheSize2 = Caches[Index]->Table.InstalledSize2 = (SMBIOS_CACHE_SIZE_2){Sizes[Index], 0};
+      Caches[Index]->Table.Associativity = Index == 2 ? CacheAssociativity12Way : CacheAssociativityUnknown;
+    }
+  }
 }
 
 VOID

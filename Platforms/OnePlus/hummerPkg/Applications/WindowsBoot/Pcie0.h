@@ -49,4 +49,9 @@ AdspInitialize (
   IN UINTN       FileSystemCount
   );
 
+EFI_STATUS
+GpuInitialize (
+  VOID
+  );
+
 #endif

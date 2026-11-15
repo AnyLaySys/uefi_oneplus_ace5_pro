@@ -51,17 +51,9 @@ GRAPHICS_CONSOLE_MODE_DATA  mGraphicsConsoleModeData[] = {
   { 0,   0  }
 };
 
-EFI_HII_DATABASE_PROTOCOL  *mHiiDatabase;
-EFI_HII_FONT_PROTOCOL      *mHiiFont;
-EFI_HII_HANDLE             mHiiHandle;
-VOID                       *mHiiRegistration;
 // MU_CHANGE [BEGIN] - Maintain seamless screen from PEI logo display
 static BOOLEAN  mClearScreen = FALSE;
 // MU_CHANGE [END]
-
-EFI_GUID  mFontPackageListGuid = {
-  0xf5f219d3, 0x7006, 0x4648, { 0xac, 0x8d, 0xd6, 0x1d, 0xfb, 0x7b, 0xc6, 0xad }
-};
 
 CHAR16  mCrLfString[3] = { CHAR_CARRIAGE_RETURN, CHAR_LINEFEED, CHAR_NULL };
 
@@ -85,12 +77,6 @@ EFI_GRAPHICS_OUTPUT_BLT_PIXEL  mGraphicsEfiColors[16] = {
   { 0xff, 0x00, 0xff, 0x00 },  // FUCHSIA
   { 0x00, 0xff, 0xff, 0x00 },  // YELLOW
   { 0xff, 0xff, 0xff, 0x00 }   // WHITE
-};
-
-EFI_NARROW_GLYPH  mCursorGlyph = {
-  0x0000,
-  0x00,
-  { 0x00,0x00,  0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0xFF }
 };
 
 CHAR16  SpaceStr[] = { NARROW_CHAR, ' ', 0 };
@@ -171,10 +157,7 @@ GraphicsConsoleControllerDriverSupported (
     goto Error;
   }
 
-  //
-  // Does Hii Exist?  If not, we aren't ready to run
-  //
-  Status = EfiLocateHiiProtocol ();
+  Status = EFI_SUCCESS;
 
   //
   // Close the I/O Abstraction(s) used to perform the supported test
@@ -236,8 +219,8 @@ InitializeGraphicsConsoleTextMode (
   // Compute the maximum number of text Rows and Columns that this current graphics mode can support.
   // To make graphics console work well, MaxColumns and MaxRows should not be zero.
   //
-  MaxColumns = HorizontalResolution / EFI_GLYPH_WIDTH;
-  MaxRows    = VerticalResolution / EFI_GLYPH_HEIGHT;
+  MaxColumns = HorizontalResolution / CONSOLE_FONT_WIDTH;
+  MaxRows    = VerticalResolution / CONSOLE_FONT_HEIGHT;
 
   //
   // According to UEFI spec, all output devices support at least 80x25 text mode.
@@ -276,15 +259,15 @@ InitializeGraphicsConsoleTextMode (
   NewModeBuffer[ValidCount].GopWidth      = HorizontalResolution;
   NewModeBuffer[ValidCount].GopHeight     = VerticalResolution;
   NewModeBuffer[ValidCount].GopModeNumber = GopModeNumber;
-  NewModeBuffer[ValidCount].DeltaX        = (HorizontalResolution - (NewModeBuffer[ValidCount].Columns * EFI_GLYPH_WIDTH)) >> 1;
-  NewModeBuffer[ValidCount].DeltaY        = (VerticalResolution - (NewModeBuffer[ValidCount].Rows * EFI_GLYPH_HEIGHT)) >> 1;
+  NewModeBuffer[ValidCount].DeltaX        = (HorizontalResolution - (NewModeBuffer[ValidCount].Columns * CONSOLE_FONT_WIDTH)) >> 1;
+  NewModeBuffer[ValidCount].DeltaY        = (VerticalResolution - (NewModeBuffer[ValidCount].Rows * CONSOLE_FONT_HEIGHT)) >> 1;
   ValidCount++;
 
   if ((MaxColumns >= 80) && (MaxRows >= 50)) {
     NewModeBuffer[ValidCount].Columns = 80;
     NewModeBuffer[ValidCount].Rows    = 50;
-    NewModeBuffer[ValidCount].DeltaX  = (HorizontalResolution - (80 * EFI_GLYPH_WIDTH)) >> 1;
-    NewModeBuffer[ValidCount].DeltaY  = (VerticalResolution - (50 * EFI_GLYPH_HEIGHT)) >> 1;
+    NewModeBuffer[ValidCount].DeltaX  = (HorizontalResolution - (80 * CONSOLE_FONT_WIDTH)) >> 1;
+    NewModeBuffer[ValidCount].DeltaY  = (VerticalResolution - (50 * CONSOLE_FONT_HEIGHT)) >> 1;
   }
 
   NewModeBuffer[ValidCount].GopWidth      = HorizontalResolution;
@@ -322,8 +305,8 @@ InitializeGraphicsConsoleTextMode (
       NewModeBuffer[ValidCount].GopWidth      = HorizontalResolution;
       NewModeBuffer[ValidCount].GopHeight     = VerticalResolution;
       NewModeBuffer[ValidCount].GopModeNumber = GopModeNumber;
-      NewModeBuffer[ValidCount].DeltaX        = (HorizontalResolution - (NewModeBuffer[ValidCount].Columns * EFI_GLYPH_WIDTH)) >> 1;
-      NewModeBuffer[ValidCount].DeltaY        = (VerticalResolution - (NewModeBuffer[ValidCount].Rows * EFI_GLYPH_HEIGHT)) >> 1;
+      NewModeBuffer[ValidCount].DeltaX        = (HorizontalResolution - (NewModeBuffer[ValidCount].Columns * CONSOLE_FONT_WIDTH)) >> 1;
+      NewModeBuffer[ValidCount].DeltaY        = (VerticalResolution - (NewModeBuffer[ValidCount].Rows * CONSOLE_FONT_HEIGHT)) >> 1;
       ValidCount++;
     }
   }
@@ -750,31 +733,6 @@ CheckModeSupported (
   return Status;
 }
 
-/**
-  Locate HII Database protocol and HII Font protocol.
-
-  @retval  EFI_SUCCESS     HII Database protocol and HII Font protocol
-                           are located successfully.
-  @return  other           Failed to locate HII Database protocol or
-                           HII Font protocol.
-
-**/
-EFI_STATUS
-EfiLocateHiiProtocol (
-  VOID
-  )
-{
-  EFI_STATUS  Status;
-
-  Status = gBS->LocateProtocol (&gEfiHiiDatabaseProtocolGuid, NULL, (VOID **)&mHiiDatabase);
-  if (EFI_ERROR (Status)) {
-    return Status;
-  }
-
-  Status = gBS->LocateProtocol (&gEfiHiiFontProtocolGuid, NULL, (VOID **)&mHiiFont);
-  return Status;
-}
-
 //
 // Body of the STO functions
 //
@@ -884,8 +842,8 @@ GraphicsConsoleConOutOutputString (
   MaxRow    = Private->ModeData[Mode].Rows;
   DeltaX    = (UINTN)Private->ModeData[Mode].DeltaX;
   DeltaY    = (UINTN)Private->ModeData[Mode].DeltaY;
-  Width     = MaxColumn * EFI_GLYPH_WIDTH;
-  Height    = (MaxRow - 1) * EFI_GLYPH_HEIGHT;
+  Width     = MaxColumn * CONSOLE_FONT_WIDTH;
+  Height    = (MaxRow - 1) * CONSOLE_FONT_HEIGHT;
   Delta     = Width * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL);
 
   //
@@ -943,7 +901,7 @@ GraphicsConsoleConOutOutputString (
                             NULL,
                             EfiBltVideoToVideo,
                             DeltaX,
-                            DeltaY + EFI_GLYPH_HEIGHT,
+                            DeltaY + CONSOLE_FONT_HEIGHT,
                             DeltaX,
                             DeltaY,
                             Width,
@@ -963,7 +921,7 @@ GraphicsConsoleConOutOutputString (
                             DeltaX,
                             DeltaY + Height,
                             Width,
-                            EFI_GLYPH_HEIGHT,
+                            CONSOLE_FONT_HEIGHT,
                             Delta
                             );
         }
@@ -1086,46 +1044,15 @@ GraphicsConsoleConOutOutputString (
 EFI_STATUS
 EFIAPI
 GraphicsConsoleConOutTestString (
-  IN  EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *This,
-  IN  CHAR16                           *WString
+  IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+  IN CHAR16 *String
   )
 {
-  EFI_STATUS  Status;
-  UINT16      Count;
-
-  EFI_IMAGE_OUTPUT  *Blt;
-
-  Blt   = NULL;
-  Count = 0;
-
-  while (WString[Count] != 0) {
-    //
-    // In TerminalConOutOutputString(), WIDE_CHAR/NARROW_CHAR will be ignored.
-    // So, WString contains WIDE_CHAR/NARROW_CHAR is also valid.
-    //
-    if ((WString[Count] == WIDE_CHAR) || (WString[Count] == NARROW_CHAR)) {
-      continue;
-    }
-
-    Status = mHiiFont->GetGlyph (
-                         mHiiFont,
-                         WString[Count],
-                         NULL,
-                         &Blt,
-                         NULL
-                         );
-    if (Blt != NULL) {
-      FreePool (Blt);
-      Blt = NULL;
-    }
-
-    Count++;
-
-    if (EFI_ERROR (Status)) {
+  for (; *String != 0; String++) {
+    if (*String >= 32 && *String != WIDE_CHAR && *String != NARROW_CHAR && !mConsoleFont->HasGlyph (*String)) {
       return EFI_UNSUPPORTED;
     }
   }
-
   return EFI_SUCCESS;
 }
 
@@ -1258,7 +1185,7 @@ GraphicsConsoleConOutSetMode (
   //
   // Attempt to allocate a line buffer for the requested mode number
   //
-  NewLineBuffer = AllocatePool (sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL) * ModeData->Columns * EFI_GLYPH_WIDTH * EFI_GLYPH_HEIGHT);
+  NewLineBuffer = AllocatePool (sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL) * ModeData->Columns * CONSOLE_FONT_WIDTH * CONSOLE_FONT_HEIGHT);
 
   if (NewLineBuffer == NULL) {
     //
@@ -1602,84 +1529,23 @@ GetTextColors (
 **/
 EFI_STATUS
 DrawUnicodeWeightAtCursorN (
-  IN  EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL  *This,
-  IN  CHAR16                           *UnicodeWeight,
-  IN  UINTN                            Count
+  IN EFI_SIMPLE_TEXT_OUTPUT_PROTOCOL *This,
+  IN CHAR16 *String,
+  IN UINTN Count
   )
 {
-  EFI_STATUS             Status;
-  GRAPHICS_CONSOLE_DEV   *Private;
-  EFI_IMAGE_OUTPUT       *Blt;
-  EFI_STRING             String;
-  EFI_FONT_DISPLAY_INFO  *FontInfo;
+  GRAPHICS_CONSOLE_DEV *Private = GRAPHICS_CONSOLE_CON_OUT_DEV_FROM_THIS (This);
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Foreground;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Background;
 
-  Private = GRAPHICS_CONSOLE_CON_OUT_DEV_FROM_THIS (This);
-  Blt     = (EFI_IMAGE_OUTPUT *)AllocateZeroPool (sizeof (EFI_IMAGE_OUTPUT));
-  if (Blt == NULL) {
-    return EFI_OUT_OF_RESOURCES;
+  if (Private->GraphicsOutput == NULL) {
+    return EFI_UNSUPPORTED;
   }
-
-  Blt->Width  = (UINT16)(Private->ModeData[This->Mode->Mode].GopWidth);
-  Blt->Height = (UINT16)(Private->ModeData[This->Mode->Mode].GopHeight);
-
-  String = AllocateCopyPool ((Count + 1) * sizeof (CHAR16), UnicodeWeight);
-  if (String == NULL) {
-    FreePool (Blt);
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  //
-  // Set the end character
-  //
-  *(String + Count) = L'\0';
-
-  FontInfo = (EFI_FONT_DISPLAY_INFO *)AllocateZeroPool (sizeof (EFI_FONT_DISPLAY_INFO));
-  if (FontInfo == NULL) {
-    FreePool (Blt);
-    FreePool (String);
-    return EFI_OUT_OF_RESOURCES;
-  }
-
-  //
-  // Get current foreground and background colors.
-  //
-  GetTextColors (This, &FontInfo->ForegroundColor, &FontInfo->BackgroundColor);
-
-  if (Private->GraphicsOutput != NULL) {
-    //
-    // If Graphics Output protocol exists, using HII Font protocol to draw.
-    //
-    Blt->Image.Screen = Private->GraphicsOutput;
-
-    Status = mHiiFont->StringToImage (
-                         mHiiFont,
-                         EFI_HII_IGNORE_IF_NO_GLYPH | EFI_HII_DIRECT_TO_SCREEN | EFI_HII_IGNORE_LINE_BREAK,
-                         String,
-                         FontInfo,
-                         &Blt,
-                         This->Mode->CursorColumn * EFI_GLYPH_WIDTH + Private->ModeData[This->Mode->Mode].DeltaX,
-                         This->Mode->CursorRow * EFI_GLYPH_HEIGHT + Private->ModeData[This->Mode->Mode].DeltaY,
-                         NULL,
-                         NULL,
-                         NULL
-                         );
-  } else {
-    Status = EFI_UNSUPPORTED;
-  }
-
-  if (Blt != NULL) {
-    FreePool (Blt);
-  }
-
-  if (String != NULL) {
-    FreePool (String);
-  }
-
-  if (FontInfo != NULL) {
-    FreePool (FontInfo);
-  }
-
-  return Status;
+  GetTextColors (This, &Foreground, &Background);
+  return mConsoleFont->DrawText (Private->GraphicsOutput, String, Count,
+    This->Mode->CursorColumn * CONSOLE_FONT_WIDTH + Private->ModeData[This->Mode->Mode].DeltaX,
+    This->Mode->CursorRow * CONSOLE_FONT_HEIGHT + Private->ModeData[This->Mode->Mode].DeltaY,
+    Foreground, Background);
 }
 
 /**
@@ -1707,7 +1573,7 @@ FlushCursor (
   EFI_GRAPHICS_OUTPUT_PROTOCOL         *GraphicsOutput;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL_UNION  Foreground;
   EFI_GRAPHICS_OUTPUT_BLT_PIXEL_UNION  Background;
-  EFI_GRAPHICS_OUTPUT_BLT_PIXEL_UNION  BltChar[EFI_GLYPH_HEIGHT][EFI_GLYPH_WIDTH];
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL_UNION  BltChar[CONSOLE_FONT_HEIGHT][CONSOLE_FONT_WIDTH];
   UINTN                                PosX;
   UINTN                                PosY;
 
@@ -1726,8 +1592,8 @@ FlushCursor (
   //
   // Blt a character to the screen
   //
-  GlyphX = (CurrentMode->CursorColumn * EFI_GLYPH_WIDTH) + Private->ModeData[CurrentMode->Mode].DeltaX;
-  GlyphY = (CurrentMode->CursorRow * EFI_GLYPH_HEIGHT) + Private->ModeData[CurrentMode->Mode].DeltaY;
+  GlyphX = (CurrentMode->CursorColumn * CONSOLE_FONT_WIDTH) + Private->ModeData[CurrentMode->Mode].DeltaX;
+  GlyphY = (CurrentMode->CursorRow * CONSOLE_FONT_HEIGHT) + Private->ModeData[CurrentMode->Mode].DeltaY;
   if (GraphicsOutput != NULL) {
     GraphicsOutput->Blt (
                       GraphicsOutput,
@@ -1737,22 +1603,17 @@ FlushCursor (
                       GlyphY,
                       0,
                       0,
-                      EFI_GLYPH_WIDTH,
-                      EFI_GLYPH_HEIGHT,
-                      EFI_GLYPH_WIDTH * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+                      CONSOLE_FONT_WIDTH,
+                      CONSOLE_FONT_HEIGHT,
+                      CONSOLE_FONT_WIDTH * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
                       );
   }
 
   GetTextColors (This, &Foreground.Pixel, &Background.Pixel);
 
-  //
-  // Convert Monochrome bitmap of the Glyph to BltBuffer structure
-  //
-  for (PosY = 0; PosY < EFI_GLYPH_HEIGHT; PosY++) {
-    for (PosX = 0; PosX < EFI_GLYPH_WIDTH; PosX++) {
-      if ((mCursorGlyph.GlyphCol1[PosY] & (BIT0 << PosX)) != 0) {
-        BltChar[PosY][EFI_GLYPH_WIDTH - PosX - 1].Raw ^= Foreground.Raw;
-      }
+  for (PosY = CONSOLE_FONT_HEIGHT - 3; PosY < CONSOLE_FONT_HEIGHT; PosY++) {
+    for (PosX = 0; PosX < CONSOLE_FONT_WIDTH; PosX++) {
+      BltChar[PosY][PosX].Raw ^= Foreground.Raw;
     }
   }
 
@@ -1765,93 +1626,13 @@ FlushCursor (
                       0,
                       GlyphX,
                       GlyphY,
-                      EFI_GLYPH_WIDTH,
-                      EFI_GLYPH_HEIGHT,
-                      EFI_GLYPH_WIDTH * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
+                      CONSOLE_FONT_WIDTH,
+                      CONSOLE_FONT_HEIGHT,
+                      CONSOLE_FONT_WIDTH * sizeof (EFI_GRAPHICS_OUTPUT_BLT_PIXEL)
                       );
   }
 
   return EFI_SUCCESS;
-}
-
-/**
-  HII Database Protocol notification event handler.
-
-  Register font package when HII Database Protocol has been installed.
-
-  @param[in] Event    Event whose notification function is being invoked.
-  @param[in] Context  Pointer to the notification function's context.
-**/
-VOID
-EFIAPI
-RegisterFontPackage (
-  IN  EFI_EVENT  Event,
-  IN  VOID       *Context
-  )
-{
-  EFI_STATUS                       Status;
-  EFI_HII_SIMPLE_FONT_PACKAGE_HDR  *SimplifiedFont;
-  UINT32                           PackageLength;
-  UINT8                            *Package;
-  UINT8                            *Location;
-  EFI_HII_DATABASE_PROTOCOL        *HiiDatabase;
-
-  //
-  // Locate HII Database Protocol
-  //
-  Status = gBS->LocateProtocol (
-                  &gEfiHiiDatabaseProtocolGuid,
-                  NULL,
-                  (VOID **)&HiiDatabase
-                  );
-  if (EFI_ERROR (Status)) {
-    return;
-  }
-
-  //
-  // Add 4 bytes to the header for entire length for HiiAddPackages use only.
-  //
-  //    +--------------------------------+ <-- Package
-  //    |                                |
-  //    |    PackageLength(4 bytes)      |
-  //    |                                |
-  //    |--------------------------------| <-- SimplifiedFont
-  //    |                                |
-  //    |EFI_HII_SIMPLE_FONT_PACKAGE_HDR |
-  //    |                                |
-  //    |--------------------------------| <-- Location
-  //    |                                |
-  //    |     gUsStdNarrowGlyphData      |
-  //    |                                |
-  //    +--------------------------------+
-
-  PackageLength = sizeof (EFI_HII_SIMPLE_FONT_PACKAGE_HDR) + mNarrowFontSize + 4;
-  Package       = AllocateZeroPool (PackageLength);
-  if (Package == NULL) {
-    ASSERT (Package != NULL);
-    return;
-  }
-
-  WriteUnaligned32 ((UINT32 *)Package, PackageLength);
-  SimplifiedFont                       = (EFI_HII_SIMPLE_FONT_PACKAGE_HDR *)(Package + 4);
-  SimplifiedFont->Header.Length        = (UINT32)(PackageLength - 4);
-  SimplifiedFont->Header.Type          = EFI_HII_PACKAGE_SIMPLE_FONTS;
-  SimplifiedFont->NumberOfNarrowGlyphs = (UINT16)(mNarrowFontSize / sizeof (EFI_NARROW_GLYPH));
-
-  Location = (UINT8 *)(&SimplifiedFont->NumberOfWideGlyphs + 1);
-  CopyMem (Location, gUsStdNarrowGlyphData, mNarrowFontSize);
-
-  //
-  // Add this simplified font package to a package list then install it.
-  //
-  mHiiHandle = HiiAddPackages (
-                 &mFontPackageListGuid,
-                 NULL,
-                 Package,
-                 NULL
-                 );
-  ASSERT (mHiiHandle != NULL);
-  FreePool (Package);
 }
 
 /**
@@ -1873,16 +1654,10 @@ InitializeGraphicsConsole (
 {
   EFI_STATUS  Status;
 
-  //
-  // Register notify function on HII Database Protocol to add font package.
-  //
-  EfiCreateProtocolNotifyEvent (
-    &gEfiHiiDatabaseProtocolGuid,
-    TPL_CALLBACK,
-    RegisterFontPackage,
-    NULL,
-    &mHiiRegistration
-    );
+  Status = InitializeBitmapFont (ImageHandle);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   //
   // Install driver model protocol(s).

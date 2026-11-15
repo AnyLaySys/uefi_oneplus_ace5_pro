@@ -14,6 +14,7 @@
 #include <Protocol/GraphicsOutput.h>
 #include <Protocol/BootLogo.h>
 #include <Protocol/BootLogo2.h>
+#include <Protocol/PreservedBootLogo.h>
 
 #include <Guid/EventGroup.h>
 
@@ -419,114 +420,86 @@ BgrtReadyToBootEventNotify (
   IN VOID       *Context
   )
 {
-  EFI_STATUS               Status;
-  EFI_ACPI_TABLE_PROTOCOL  *AcpiTableProtocol;
-  VOID                     *ImageBuffer;
-  UINT32                   BmpSize;
+  EFI_STATUS                        Status;
+  EFI_ACPI_TABLE_PROTOCOL           *AcpiTableProtocol;
+  EFI_PRESERVED_BOOT_LOGO_PROTOCOL   *Preserved;
+  VOID                              *ImageBuffer;
+  UINT32                            BmpSize;
+  BOOLEAN                           NewImage;
 
-  //
-  // Get ACPI Table protocol.
-  //
-  Status = gBS->LocateProtocol (
-                  &gEfiAcpiTableProtocolGuid,
-                  NULL,
-                  (VOID **)&AcpiTableProtocol
-                  );
+  Status = gBS->LocateProtocol (&gEfiAcpiTableProtocolGuid, NULL, (VOID **)&AcpiTableProtocol);
   if (EFI_ERROR (Status)) {
     return;
   }
 
-  //
-  // Check whether Boot Graphics Resource Table is already installed.
-  //
-  if (mAcpiBgrtInstalled) {
-    if (!mAcpiBgrtStatusChanged && !mAcpiBgrtBufferChanged) {
-      //
-      // Nothing has changed
-      //
-      return;
-    } else {
-      //
-      // If BGRT data change happens, then uninstall orignal AcpiTable first
-      //
-      Status = AcpiTableProtocol->UninstallAcpiTable (
-                                    AcpiTableProtocol,
-                                    mBootGraphicsResourceTableKey
-                                    );
-      if (EFI_ERROR (Status)) {
-        return;
-      }
-    }
-  } else {
-    //
-    // Check whether Logo exists
-    //
-    if (mLogoBltBuffer == NULL) {
-      return;
-    }
+  Status = gBS->LocateProtocol (&gPreservedBootLogoProtocolGuid, NULL, (VOID **)&Preserved);
+  if (EFI_ERROR (Status) || (Preserved->BltBuffer == NULL)) {
+    Preserved = NULL;
   }
 
-  if (mAcpiBgrtBufferChanged) {
-    //
-    // Free the old BMP image buffer
-    //
-    ImageBuffer = (UINT8 *)(UINTN)mBootGraphicsResourceTableTemplate.ImageAddress;
-    if (ImageBuffer != NULL) {
-      FreePool (ImageBuffer);
-    }
+  NewImage = (Preserved != NULL) || mAcpiBgrtBufferChanged;
+  if ((!NewImage && !mAcpiBgrtStatusChanged && mAcpiBgrtInstalled) ||
+      (!NewImage && (mBootGraphicsResourceTableTemplate.ImageAddress == 0)))
+  {
+    return;
+  }
 
-    //
-    // Convert GOP Blt buffer to BMP image.  Pass in ImageBuffer set to NULL
-    // so the BMP image is allocated by TranslateGopBltToBmp().
-    //
-    ImageBuffer = NULL;
-    Status      = TranslateGopBltToBmp (
-                    mLogoBltBuffer,
-                    (UINT32)mLogoHeight,
-                    (UINT32)mLogoWidth,
-                    &ImageBuffer,
-                    &BmpSize
-                    );
+  // Convert before retiring the current image so failures preserve it.
+  ImageBuffer = NULL;
+  if (NewImage) {
+    Status = TranslateGopBltToBmpWithStride (
+               Preserved != NULL ? Preserved->BltBuffer : mLogoBltBuffer,
+               Preserved != NULL ? Preserved->Height : (UINT32)mLogoHeight,
+               Preserved != NULL ? Preserved->Width : (UINT32)mLogoWidth,
+               Preserved != NULL ? Preserved->Stride : (UINT32)mLogoWidth,
+               &ImageBuffer,
+               &BmpSize
+               );
     if (EFI_ERROR (Status)) {
       return;
     }
+  }
 
-    //
-    // Free the logo buffer
-    //
-    FreePool (mLogoBltBuffer);
-    mLogoBltBuffer = NULL;
+  if (mAcpiBgrtInstalled) {
+    Status = AcpiTableProtocol->UninstallAcpiTable (AcpiTableProtocol, mBootGraphicsResourceTableKey);
+    if (EFI_ERROR (Status)) {
+      if (ImageBuffer != NULL) {
+        FreePool (ImageBuffer);
+      }
+      return;
+    }
+    mAcpiBgrtInstalled = FALSE;
+  }
 
-    //
-    // Update BMP image fields of the Boot Graphics Resource Table
-    //
+  if (NewImage) {
+    if (mBootGraphicsResourceTableTemplate.ImageAddress != 0) {
+      FreePool ((VOID *)(UINTN)mBootGraphicsResourceTableTemplate.ImageAddress);
+    }
     mBootGraphicsResourceTableTemplate.ImageAddress = (UINT64)(UINTN)ImageBuffer;
-    mBootGraphicsResourceTableTemplate.ImageOffsetX = (UINT32)mLogoDestX;
-    mBootGraphicsResourceTableTemplate.ImageOffsetY = (UINT32)mLogoDestY;
+    mBootGraphicsResourceTableTemplate.ImageOffsetX = Preserved != NULL ? Preserved->X : (UINT32)mLogoDestX;
+    mBootGraphicsResourceTableTemplate.ImageOffsetY = Preserved != NULL ? Preserved->Y : (UINT32)mLogoDestY;
+    if (mLogoBltBuffer != NULL) {
+      FreePool (mLogoBltBuffer);
+      mLogoBltBuffer = NULL;
+    }
+    if (Preserved != NULL) {
+      mIsLogoValid = TRUE;
+      // Consume the update without freeing the borrowed full-screen snapshot.
+      Preserved->BltBuffer = NULL;
+    }
+    mAcpiBgrtBufferChanged = FALSE;
   }
 
-  //
-  // Update Status field of Boot Graphics Resource Table
-  //
-  if (mIsLogoValid) {
-    mBootGraphicsResourceTableTemplate.Status = EFI_ACPI_5_0_BGRT_STATUS_VALID;
-  } else {
-    mBootGraphicsResourceTableTemplate.Status = EFI_ACPI_5_0_BGRT_STATUS_INVALID;
-  }
-
-  //
-  // Update Checksum of Boot Graphics Resource Table
-  //
+  mBootGraphicsResourceTableTemplate.Status = mIsLogoValid ?
+    EFI_ACPI_5_0_BGRT_STATUS_VALID : EFI_ACPI_5_0_BGRT_STATUS_INVALID;
   mBootGraphicsResourceTableTemplate.Header.Checksum = 0;
-  mBootGraphicsResourceTableTemplate.Header.Checksum =
-    CalculateCheckSum8 (
-      (UINT8 *)&mBootGraphicsResourceTableTemplate,
-      sizeof (EFI_ACPI_5_0_BOOT_GRAPHICS_RESOURCE_TABLE)
-      );
+  mBootGraphicsResourceTableTemplate.Header.Checksum = CalculateCheckSum8 (
+                                                       (UINT8 *)&mBootGraphicsResourceTableTemplate,
+                                                       sizeof (EFI_ACPI_5_0_BOOT_GRAPHICS_RESOURCE_TABLE)
+                                                       );
 
-  //
-  // Publish Boot Graphics Resource Table.
-  //
+  // Retain the BMP for a retry if table installation fails.
+  mAcpiBgrtStatusChanged = TRUE;
   Status = AcpiTableProtocol->InstallAcpiTable (
                                 AcpiTableProtocol,
                                 &mBootGraphicsResourceTableTemplate,
@@ -539,7 +512,6 @@ BgrtReadyToBootEventNotify (
 
   mAcpiBgrtInstalled     = TRUE;
   mAcpiBgrtStatusChanged = FALSE;
-  mAcpiBgrtBufferChanged = FALSE;
 }
 
 /**

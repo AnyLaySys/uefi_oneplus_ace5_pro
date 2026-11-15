@@ -18,26 +18,16 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 #include <Library/BaseMemoryLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/UefiBootServicesTableLib.h>
-#include <Library/HiiLib.h>
 #include <Library/BaseLib.h>
 #include <Library/PcdLib.h>
 
 #include <Guid/MdeModuleHii.h>
 
-#include <Protocol/HiiFont.h>
-#include <Protocol/HiiDatabase.h>
 
 extern EFI_COMPONENT_NAME_PROTOCOL   gGraphicsConsoleComponentName;
 extern EFI_COMPONENT_NAME2_PROTOCOL  gGraphicsConsoleComponentName2;
 extern EFI_DRIVER_BINDING_PROTOCOL   gGraphicsConsoleDriverBinding;
-extern EFI_NARROW_GLYPH              gUsStdNarrowGlyphData[];
-
-extern UINT32  mNarrowFontSize;
-
-typedef union {
-  EFI_NARROW_GLYPH    NarrowGlyph;
-  EFI_WIDE_GLYPH      WideGlyph;
-} GLYPH_UNION;
+#include <Library/ConsoleFont.h>
 
 //
 // Device Structure
@@ -480,19 +470,10 @@ GraphicsConsoleControllerDriverStop (
   IN  EFI_HANDLE                   *ChildHandleBuffer
   );
 
-/**
-  Locate HII Database protocol and HII Font protocol.
+extern CONSOLE_FONT_PROTOCOL *mConsoleFont;
 
-  @retval  EFI_SUCCESS     HII Database protocol and HII Font protocol
-                           are located successfully.
-  @return  other           Failed to locate HII Database protocol or
-                           HII Font protocol.
-
-**/
 EFI_STATUS
-EfiLocateHiiProtocol (
-  VOID
-  );
+InitializeBitmapFont (IN EFI_HANDLE ImageHandle);
 
 /**
   Gets Graphics Console device's foreground color and background color.

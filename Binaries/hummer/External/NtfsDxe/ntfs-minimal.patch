@@ -1,0 +1,6190 @@
+--- a/Make.common
++++ b/Make.common
+@@ -114,12 +114,12 @@
+ 
+ CC             := $(CROSS_COMPILE)gcc
+ OBJCOPY        := $(CROSS_COMPILE)objcopy
+-CFLAGS         += -fno-stack-protector -Wshadow -Wall -Wunused -Werror-implicit-function-declaration
++CFLAGS         += -std=gnu11 -Os -ffunction-sections -fdata-sections -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables -fno-stack-protector -Wshadow -Wall -Wunused -Werror-implicit-function-declaration
+ CFLAGS         += -Wno-pointer-sign    # -funsigned-char does not work :(
+ CFLAGS         += -I$(GNUEFI_DIR)/inc -I$(GNUEFI_DIR)/inc/$(GNUEFI_ARCH) -I$(GNUEFI_DIR)/inc/protocol
+ CFLAGS         += -DCONFIG_$(GNUEFI_ARCH) -D__MAKEWITH_GNUEFI -DGNU_EFI_USE_MS_ABI -DNO_RAID6_RECOVERY -DNO_GRUB_COMMANDS
+ LDFLAGS        += -L$(GNUEFI_DIR)/$(GNUEFI_ARCH)/lib -e $(EP_PREFIX)efi_main
+-LDFLAGS        += -s -Wl,-Bsymbolic -nostdlib -shared
++LDFLAGS        += -Wl,--no-undefined,--gc-sections,--exclude-libs,ALL,-Map,$(DRIVER).map -Wl,-Bsymbolic -nostdlib -shared
+ LIBS            = -lefi $(CRT0_LIBS)
+ 
+ ifeq (, $(shell which $(CC)))
+@@ -145,12 +145,12 @@
+   CFLAGS       += -DDRIVERNAME=$(DRIVERNAME)
+   CFLAGS       += -I$(GRUB_DIR) -I$(GRUB_DIR)/include -I$(GRUB_DIR)/grub-core/lib/minilzo -I$(GRUB_DIR)/grub-core/lib/zstd
+   CFLAGS       += -DGRUB_FILE=\"$(subst $(srcdir)/,,$<)\"
+-  LDFLAGS      += -shared -L$(GNUEFI_LIBDIR) -L$(GRUB_DIR) -e $(EP_PREFIX)InitializeDriver
++  LDFLAGS      += -shared -L$(GNUEFI_LIBDIR) -L$(GRUB_DIR) -e _entry
+   # You do want to link with libgcc so that the gcc intrinsics like __divmoddi4 get resolved.
+   # Note however that ligcc.a *MUST* be the very last library to appear in your invocation.
+   LIBS         += -lgrub $(shell $(CC) $(CFLAGS) -print-libgcc-file-name)
+ 
+-  OBJS          = utf8.o path.o missing.o logging.o grub_file.o diskcache.o this.o file.o driver.o \
++  OBJS          = utf8.o path.o missing.o grub_file.o diskcache.o this.o file.o driver.o \
+                   $(GRUB_DIR)/grub-core/fs/fshelp.o $(GRUB_DIR)/grub-core/$(FSDIR)/$(DRIVERNAME).o
+   DRIVER        = $(DRIVERNAME)_$(ARCH)
+ endif
+@@ -196,7 +196,7 @@
+ 	$(HIDE)$(CC) $(LDFLAGS) $(OBJS) -o $(DRIVER).elf $(LIBS)
+ 	$(HIDE)$(OBJCOPY) -j .text -j .sdata -j .data -j .dynamic -j .dynsym -j .rel* \
+ 	                  -j .rela* -j .reloc -j .rodata -j .eh_frame -O binary $(DRIVER).elf $@
+-	$(HIDE)rm -f $(DRIVER).elf
++	
+ endif
+ 	@chmod a-x $(DRIVER).efi
+ 
+--- a/Makefile
++++ b/Makefile
+@@ -4,12 +4,7 @@
+ 
+ CFLAGS         += -DGRUB_FILE=\"$(subst $(srcdir)/,,$<)\" -DLZO_CFG_FREESTANDING -DGRUB
+ CFLAGS         += -I$(GRUB_DIR) -I$(GRUB_DIR)/include -I$(GRUB_DIR)/grub-core/lib/minilzo -I$(GRUB_DIR)/grub-core/lib/zstd
+-OBJS            = $(SRC_DIR)/grub.o $(GRUB_DIR)/grub-core/kern/err.o $(GRUB_DIR)/grub-core/kern/list.o \
+-                  $(GRUB_DIR)/grub-core/kern/misc.o $(GRUB_DIR)/grub-core/lib/crc.o \
+-                  $(GRUB_DIR)/grub-core/lib/minilzo/minilzo.o $(GRUB_DIR)/grub-core/lib/zstd/entropy_common.o \
+-                  $(GRUB_DIR)/grub-core/lib/zstd/error_private.o $(GRUB_DIR)/grub-core/lib/zstd/fse_decompress.o \
+-                  $(GRUB_DIR)/grub-core/lib/zstd/huf_decompress.o $(GRUB_DIR)/grub-core/lib/zstd/xxhash.o \
+-                  $(GRUB_DIR)/grub-core/lib/zstd/zstd_common.o $(GRUB_DIR)/grub-core/lib/zstd/zstd_decompress.o
++OBJS            = $(SRC_DIR)/grub.o $(GRUB_DIR)/grub-core/kern/err.o $(GRUB_DIR)/grub-core/kern/list.o $(GRUB_DIR)/grub-core/kern/misc.o
+ 
+ -include $(OBJS:.o=.d)
+ .PHONY: all clean
+--- a/gnu-efi/Make.defaults
++++ b/gnu-efi/Make.defaults
+@@ -330,3 +330,5 @@
+ 
+ export ARCH
+ 
++
++EFI_CFLAGS += -Os -ffunction-sections -fdata-sections -fvisibility=hidden -fno-unwind-tables -fno-asynchronous-unwind-tables
+--- a/gnu-efi/lib/misc.c
++++ b/gnu-efi/lib/misc.c
+@@ -32,7 +32,7 @@
+ 
+     Status = uefi_call_wrapper(BS->AllocatePool, 3, PoolAllocationType, Size, &p);
+     if (EFI_ERROR(Status)) {
+-        DEBUG((D_ERROR, "AllocatePool: out of pool  %x\n", Status));
++        
+         p = NULL;
+     }
+     return p;
+--- a/grub/grub-core/fs/fshelp.c
++++ b/grub/grub-core/fs/fshelp.c
+@@ -186,7 +186,7 @@
+       /* At this point it is expected that the current node is a
+ 	 directory, check if this is true.  */
+       if (ctx->currnode->type != GRUB_FSHELP_DIR)
+-	return grub_error (GRUB_ERR_BAD_FILE_TYPE, N_("not a directory"));
++	return grub_error (GRUB_ERR_BAD_FILE_TYPE);
+ 
+       /* Don't rely on fs providing actual . in the listing.  */
+       if (next - name == 1 && name[0] == '.')
+@@ -223,13 +223,12 @@
+ 
+ 	  /* Test if the symlink does not loop.  */
+ 	  if (++ctx->symlinknest == 8)
+-	    return grub_error (GRUB_ERR_SYMLINK_LOOP,
+-			       N_("too deep nesting of symlinks"));
++	    return grub_error (GRUB_ERR_SYMLINK_LOOP);
+ 
+ 	  if (read_symlink != NULL)
+ 	    symlink = read_symlink (ctx->currnode->node);
+ 	  else
+-	    return grub_error (GRUB_ERR_BAD_FS, "read_symlink is NULL");
++	    return grub_error (GRUB_ERR_BAD_FS);
+ 
+ 	  if (!symlink)
+ 	    return grub_errno;
+@@ -257,8 +256,7 @@
+ 	}
+     }
+ 
+-  return grub_error (GRUB_ERR_FILE_NOT_FOUND, N_("file `%s' not found"),
+-		     ctx->path);
++  return grub_error (GRUB_ERR_FILE_NOT_FOUND);
+ }
+ 
+ static grub_err_t
+@@ -281,7 +279,7 @@
+ 
+   if (!path || path[0] != '/')
+     {
+-      return grub_error (GRUB_ERR_BAD_FILENAME, N_("invalid file name `%s'"), path);
++      return grub_error (GRUB_ERR_BAD_FILENAME);
+     }
+ 
+   err = go_to_root (&ctx);
+@@ -307,9 +305,9 @@
+ 
+   /* Check if the node that was found was of the expected type.  */
+   if (expecttype == GRUB_FSHELP_REG && foundtype != expecttype)
+-    err = grub_error (GRUB_ERR_BAD_FILE_TYPE, N_("not a regular file"));
++    err = grub_error (GRUB_ERR_BAD_FILE_TYPE);
+   else if (expecttype == GRUB_FSHELP_DIR && foundtype != expecttype)
+-    err = grub_error (GRUB_ERR_BAD_FILE_TYPE, N_("not a directory"));
++    err = grub_error (GRUB_ERR_BAD_FILE_TYPE);
+   else
+     return 0;
+ 
+@@ -386,15 +384,13 @@
+    */
+   if (log2blocksize + GRUB_DISK_SECTOR_BITS >= 31)
+     {
+-      grub_error (GRUB_ERR_OUT_OF_RANGE,
+-		  N_("blocksize too large"));
++      grub_error (GRUB_ERR_OUT_OF_RANGE);
+       return -1;
+     }
+ 
+   if (pos > filesize)
+     {
+-      grub_error (GRUB_ERR_OUT_OF_RANGE,
+-		  N_("attempt to read past the end of file"));
++      grub_error (GRUB_ERR_OUT_OF_RANGE);
+       return -1;
+     }
+ 
+--- a/grub/grub-core/fs/ntfs.c
++++ b/grub/grub-core/fs/ntfs.c
+@@ -31,7 +31,6 @@
+ 
+ GRUB_MOD_LICENSE ("GPLv3+");
+ 
+-static grub_dl_t my_mod;
+ 
+ #define grub_fshelp_node grub_ntfs_file
+ 
+@@ -214,8 +213,7 @@
+   return true;
+ 
+  fail:
+-  grub_dprintf ("ntfs", "spare=%" PRIuGRUB_SIZE " min_size=%" PRIuGRUB_SIZE " attr_size=%" PRIuGRUB_SIZE "\n",
+-		spare, min_size, attr_size);
++  
+   return false;
+ }
+ 
+@@ -258,14 +256,14 @@
+   COMPILE_TIME_ASSERT ((1 << GRUB_NTFS_BLK_SHR) == GRUB_DISK_SECTOR_SIZE);
+ 
+   if (grub_memcmp (buf, magic, 4))
+-    return grub_error (GRUB_ERR_BAD_FS, "%s label not found", magic);
++    return grub_error (GRUB_ERR_BAD_FS);
+ 
+   ss = u16at (buf, 6) - 1;
+   if (ss != len)
+-    return grub_error (GRUB_ERR_BAD_FS, "size not match");
++    return grub_error (GRUB_ERR_BAD_FS);
+   pu_offset = u16at (buf, 4);
+   if (pu_offset >= (len * GRUB_DISK_SECTOR_SIZE - (2 * ss)))
+-    return grub_error (GRUB_ERR_BAD_FS, "pu offset size incorrect");
++    return grub_error (GRUB_ERR_BAD_FS);
+   pu = buf + pu_offset;
+   us = u16at (pu, 0);
+   buf -= 2;
+@@ -274,7 +272,7 @@
+       buf += GRUB_DISK_SECTOR_SIZE;
+       pu += 2;
+       if (u16at (buf, 0) != us)
+-	return grub_error (GRUB_ERR_BAD_FS, "fixup signature not match");
++	return grub_error (GRUB_ERR_BAD_FS);
+       buf[0] = pu[0];
+       buf[1] = pu[1];
+       ss--;
+@@ -307,7 +305,7 @@
+   at->end = mft->buf + (mft->data->mft_size << GRUB_NTFS_BLK_SHR);
+ 
+   if (at->attr_nxt > at->end)
+-    return grub_error (GRUB_ERR_BAD_FS, "attributes start outside the MFT");
++    return grub_error (GRUB_ERR_BAD_FS);
+ 
+   at->attr_end = at->emft_buf = at->edat_buf = at->sbuf = NULL;
+ 
+@@ -381,9 +379,7 @@
+ 	       */
+ 	      if (first_attr_off (at->emft_buf) >= (emft_buf_size - 0x18 - 2))
+ 		{
+-		  grub_error (GRUB_ERR_BAD_FS,
+-			      "can\'t find 0x%X in attribute list",
+-			      (unsigned char) *at->attr_cur);
++		  grub_error (GRUB_ERR_BAD_FS);
+ 		  return NULL;
+ 		}
+ 
+@@ -404,9 +400,7 @@
+ 		     */
+ 		    new_pos = next_attribute (new_pos, end, false);
+ 		}
+-	      grub_error (GRUB_ERR_BAD_FS,
+-			  "can\'t find 0x%X in attribute list",
+-			  (unsigned char) *at->attr_cur);
++	      grub_error (GRUB_ERR_BAD_FS);
+ 	      return NULL;
+ 	    }
+ 	}
+@@ -458,15 +452,14 @@
+ 	    return NULL;
+ 	  if (read_data (at, pa, at->edat_buf, 0, n, 0, 0, 0))
+ 	    {
+-	      grub_error (GRUB_ERR_BAD_FS,
+-			  "fail to read non-resident attribute list");
++	      grub_error (GRUB_ERR_BAD_FS);
+ 	      return NULL;
+ 	    }
+ 	  at->attr_nxt = at->edat_buf;
+ 	  edat_offset = u32at (pa, 0x30);
+ 	  if (edat_offset >= n)
+ 	    {
+-	      grub_error (GRUB_ERR_BAD_FS, "edat offset is out of bounds");
++	      grub_error (GRUB_ERR_BAD_FS);
+ 	      return NULL;
+ 	    }
+ 	  at->attr_end = at->edat_buf + edat_offset;
+@@ -478,7 +471,7 @@
+ 	  edat_offset = u32at (pa, 4);
+ 	  if ((at->attr_end + edat_offset) >= (at->end))
+ 	    {
+-	      grub_error (GRUB_ERR_BAD_FS, "edat offset is out of bounds");
++	      grub_error (GRUB_ERR_BAD_FS);
+ 	      return NULL;
+ 	    }
+ 	  at->attr_end = at->attr_end + edat_offset;
+@@ -521,7 +514,7 @@
+ 
+ 	  if ((pa >= pa_end) || (pa_end - pa < 0x18))
+ 	    {
+-	      grub_error (GRUB_ERR_BAD_FS, "can\'t parse attribute list");
++	      grub_error (GRUB_ERR_BAD_FS);
+ 	      return NULL;
+ 	    }
+ 
+@@ -542,7 +535,7 @@
+ 
+               if ((pa >= pa_end) || (pa_end - pa < 0x18))
+                 {
+-	          grub_error (GRUB_ERR_BAD_FS, "can\'t parse attribute list");
++	          grub_error (GRUB_ERR_BAD_FS);
+ 	          return NULL;
+ 	        }
+ 
+@@ -636,15 +629,14 @@
+ 	  if (run)
+ 	    {
+ 	      if (run[8] == 0)
+-		return grub_error (GRUB_ERR_BAD_FS,
+-				   "$DATA should be non-resident");
++		return grub_error (GRUB_ERR_BAD_FS);
+ 
+ 	      run += u16at (run, 0x20);
+ 	      ctx->curr_lcn = 0;
+ 	      goto retry;
+ 	    }
+ 	}
+-      return grub_error (GRUB_ERR_BAD_FS, "run list overflow");
++      return grub_error (GRUB_ERR_BAD_FS);
+     }
+   ctx->curr_vcn = ctx->next_vcn;
+   ctx->next_vcn += read_run_data (run, c1, 0);	/* length of current VCN */
+@@ -694,23 +686,23 @@
+   ctx->comp.log_spc = at->mft->data->log_spc;
+   ctx->comp.disk = at->mft->data->disk;
+ 
+-  if (read_hook == grub_file_progress_hook)
+-    ctx->file = read_hook_data;
+ 
+   if (pa[8] == 0)
+     {
+       if (ofs + len > res_attr_data_len (pa))
+-	return grub_error (GRUB_ERR_BAD_FS, "read out of range");
++	return grub_error (GRUB_ERR_BAD_FS);
+ 
+       if (res_attr_data_len (pa) > (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR))
+-	return grub_error (GRUB_ERR_BAD_FS, "resident attribute too large");
+-
+-      if (pa >= at->mft->buf + (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR))
+-	return grub_error (GRUB_ERR_BAD_FS, "resident attribute out of range");
++	return grub_error (GRUB_ERR_BAD_FS);
++
++      /* find_attr() can return an attribute from an extension MFT record. */
++      if (pa < at->end - (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR) ||
++          pa >= at->end)
++	return grub_error (GRUB_ERR_BAD_FS);
+ 
+       if (res_attr_data_off (pa) + res_attr_data_len (pa) >
+-	  (grub_addr_t) at->mft->buf + (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR) - (grub_addr_t) pa)
+-	return grub_error (GRUB_ERR_BAD_FS, "resident attribute out of range");
++	  (grub_addr_t) at->end - (grub_addr_t) pa)
++	return grub_error (GRUB_ERR_BAD_FS);
+ 
+       grub_memcpy (dest, pa + res_attr_data_off (pa) + ofs, len);
+       return 0;
+@@ -718,7 +710,7 @@
+ 
+   run_offset = u16at (pa, 0x20);
+   if ((run_offset + pa) >= (at->end))
+-      return grub_error (GRUB_ERR_BAD_FS, "run offset out of range");
++      return grub_error (GRUB_ERR_BAD_FS);
+ 
+   ctx->cur_run = pa + run_offset;
+ 
+@@ -729,11 +721,10 @@
+       && !(at->flags & GRUB_NTFS_AF_GPOS))
+     {
+       if (!cached)
+-	return grub_error (GRUB_ERR_BAD_FS, "attribute can\'t be compressed");
++	return grub_error (GRUB_ERR_BAD_FS);
+ 
+       return (grub_ntfscomp_func) ? grub_ntfscomp_func (dest, ofs, len, ctx)
+-	: grub_error (GRUB_ERR_BAD_FS, N_("module `%s' isn't loaded"),
+-		      "ntfscomp");
++	: grub_error (GRUB_ERR_BAD_FS);
+     }
+ 
+   ctx->target_vcn = ofs >> (GRUB_NTFS_BLK_SHR + ctx->comp.log_spc);
+@@ -784,7 +775,7 @@
+   grub_err_t ret;
+ 
+   if (at == NULL || at->attr_cur == NULL)
+-    return grub_error (GRUB_ERR_BAD_FS, "attribute not found");
++    return grub_error (GRUB_ERR_BAD_FS);
+   save_cur = at->attr_cur;
+   at->attr_nxt = at->attr_cur;
+   attr = *at->attr_nxt;
+@@ -820,8 +811,7 @@
+ 		     read_hook, read_hook_data);
+   else
+     ret =
+-      (grub_errno) ? grub_errno : grub_error (GRUB_ERR_BAD_FS,
+-					      "attribute not found");
++      (grub_errno) ? grub_errno : grub_error (GRUB_ERR_BAD_FS);
+   at->attr_cur = save_cur;
+   return ret;
+ }
+@@ -832,7 +822,7 @@
+   if (read_attr
+       (&data->mmft.attr, buf, mftno * ((grub_disk_addr_t) data->mft_size << GRUB_NTFS_BLK_SHR),
+        data->mft_size << GRUB_NTFS_BLK_SHR, 0, 0, 0))
+-    return grub_error (GRUB_ERR_BAD_FS, "read MFT 0x%llx fails", (unsigned long long) mftno);
++    return grub_error (GRUB_ERR_BAD_FS);
+   return fixup (buf, data->mft_size, (const grub_uint8_t *) "FILE");
+ }
+ 
+@@ -852,8 +842,7 @@
+ 
+   flag = u16at (mft->buf, 0x16);
+   if ((flag & 1) == 0)
+-    return grub_error (GRUB_ERR_BAD_FS, "MFT 0x%llx is not in use",
+-		       (unsigned long long) mftno);
++    return grub_error (GRUB_ERR_BAD_FS);
+ 
+   if ((flag & 2) == 0)
+     {
+@@ -861,8 +850,7 @@
+ 
+       pa = locate_attr (&mft->attr, mft, GRUB_NTFS_AT_DATA);
+       if (pa == NULL)
+-	return grub_error (GRUB_ERR_BAD_FS, "no $DATA in MFT 0x%llx",
+-			   (unsigned long long) mftno);
++	return grub_error (GRUB_ERR_BAD_FS);
+ 
+       if (!pa[8])
+ 	mft->size = res_attr_data_len (pa);
+@@ -1025,8 +1013,7 @@
+   pa = locate_attr (&mft->attr, mft, GRUB_NTFS_AT_SYMLINK);
+   if (pa == NULL)
+     {
+-      grub_error (GRUB_ERR_BAD_FS, "no $SYMLINK in MFT 0x%llx",
+-		  (unsigned long long) mft->ino);
++      grub_error (GRUB_ERR_BAD_FS);
+       goto fail;
+     }
+ 
+@@ -1048,8 +1035,7 @@
+       len = grub_cpu_to_le32 (symdesc.len1);
+       break;
+     default:
+-      grub_error (GRUB_ERR_BAD_FS, "symlink type invalid (%x)",
+-		  grub_cpu_to_le32 (symdesc.type));
++      grub_error (GRUB_ERR_BAD_FS);
+       goto fail;
+     }
+ 
+@@ -1121,7 +1107,7 @@
+       cur_pos = find_attr (at, GRUB_NTFS_AT_INDEX_ROOT);
+       if (cur_pos == NULL || cur_pos == last_pos)
+ 	{
+-	  grub_error (GRUB_ERR_BAD_FS, "no $INDEX_ROOT");
++	  grub_error (GRUB_ERR_BAD_FS);
+ 	  goto done;
+ 	}
+       last_pos = cur_pos;
+@@ -1159,7 +1145,7 @@
+ 
+       if (cur_pos == last_pos)
+       {
+-        grub_error (GRUB_ERR_BAD_FS, "bitmap attribute loop");
++        grub_error (GRUB_ERR_BAD_FS);
+         goto done;
+       }
+       last_pos = cur_pos;
+@@ -1183,20 +1169,22 @@
+ 	    {
+               if (bitmap_len > (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR))
+ 		{
+-		  grub_error (GRUB_ERR_BAD_FS, "resident bitmap too large");
++		  grub_error (GRUB_ERR_BAD_FS);
+ 		  goto done;
+ 		}
+ 
+-              if (cur_pos >= at->mft->buf + (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR))
++              /* The bitmap may reside in an extension MFT record too. */
++              if (cur_pos < at->end - (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR) ||
++                  cur_pos >= at->end)
+ 		{
+-		  grub_error (GRUB_ERR_BAD_FS, "resident bitmap out of range");
++		  grub_error (GRUB_ERR_BAD_FS);
+ 		  goto done;
+ 		}
+ 
+               if (res_attr_data_off (cur_pos) + res_attr_data_len (cur_pos) >
+-		  (grub_addr_t) at->mft->buf + (at->mft->data->mft_size << GRUB_NTFS_BLK_SHR) - (grub_addr_t) cur_pos)
++		  (grub_addr_t) at->end - (grub_addr_t) cur_pos)
+ 		{
+-		  grub_error (GRUB_ERR_BAD_FS, "resident bitmap out of range");
++		  grub_error (GRUB_ERR_BAD_FS);
+ 		  goto done;
+ 		}
+ 
+@@ -1207,8 +1195,7 @@
+             {
+               if (read_data (at, cur_pos, bmp, 0, bitmap_len, 0, 0, 0))
+                 {
+-                  grub_error (GRUB_ERR_BAD_FS,
+-                              "fails to read non-resident $BITMAP");
++                  grub_error (GRUB_ERR_BAD_FS);
+                   goto done;
+                 }
+                 tmp_len = u32at (cur_pos, 0x30);
+@@ -1216,8 +1203,7 @@
+                   bitmap_len = tmp_len;
+                 else
+                 {
+-                  grub_error (GRUB_ERR_BAD_FS,
+-                    "bitmap len too large for non-resident $BITMAP");
++                  grub_error (GRUB_ERR_BAD_FS);
+                   goto done;
+                 }
+             }
+@@ -1245,7 +1231,7 @@
+ 
+   if ((!cur_pos) && (bitmap))
+     {
+-      grub_error (GRUB_ERR_BAD_FS, "$BITMAP without $INDEX_ALLOCATION");
++      grub_error (GRUB_ERR_BAD_FS);
+       goto done;
+     }
+ 
+@@ -1372,7 +1358,7 @@
+   return data;
+ 
+ fail:
+-  grub_error (GRUB_ERR_BAD_FS, "not an ntfs filesystem");
++  grub_error (GRUB_ERR_BAD_FS);
+ 
+   if (data)
+     {
+@@ -1416,7 +1402,7 @@
+   struct grub_ntfs_data *data = 0;
+   struct grub_fshelp_node *fdiro = 0;
+ 
+-  grub_dl_ref (my_mod);
++  
+ 
+   data = grub_ntfs_mount (device->disk);
+   if (!data)
+@@ -1443,7 +1429,7 @@
+       grub_free (data);
+     }
+ 
+-  grub_dl_unref (my_mod);
++  
+ 
+   return grub_errno;
+ }
+@@ -1454,7 +1440,7 @@
+   struct grub_ntfs_data *data = 0;
+   struct grub_fshelp_node *mft = 0;
+ 
+-  grub_dl_ref (my_mod);
++  
+ 
+   data = grub_ntfs_mount (file->device->disk);
+   if (!data)
+@@ -1492,7 +1478,7 @@
+       grub_free (data);
+     }
+ 
+-  grub_dl_unref (my_mod);
++  
+ 
+   return grub_errno;
+ }
+@@ -1525,7 +1511,7 @@
+       grub_free (data);
+     }
+ 
+-  grub_dl_unref (my_mod);
++  
+ 
+   return grub_errno;
+ }
+@@ -1538,7 +1524,7 @@
+   grub_uint8_t *pa;
+   grub_err_t err;
+ 
+-  grub_dl_ref (my_mod);
++  
+ 
+   *label = 0;
+ 
+@@ -1570,13 +1556,13 @@
+ 
+   if (pa == NULL || pa >= mft->buf + (mft->data->mft_size << GRUB_NTFS_BLK_SHR))
+     {
+-      grub_error (GRUB_ERR_BAD_FS, "can\'t parse volume label");
++      grub_error (GRUB_ERR_BAD_FS);
+       goto fail;
+     }
+ 
+   if (mft->buf + (mft->data->mft_size << GRUB_NTFS_BLK_SHR) - pa < 0x16)
+     {
+-      grub_error (GRUB_ERR_BAD_FS, "can\'t parse volume label");
++      grub_error (GRUB_ERR_BAD_FS);
+       goto fail;
+     }
+ 
+@@ -1590,7 +1576,7 @@
+           pa >= mft->buf && (pa + len < (mft->buf + (mft->data->mft_size << GRUB_NTFS_BLK_SHR))))
+         *label = get_utf8 (pa, len);
+       else
+-        grub_error (GRUB_ERR_BAD_FS, "can\'t parse volume label");
++        grub_error (GRUB_ERR_BAD_FS);
+     }
+ 
+ fail:
+@@ -1606,38 +1592,12 @@
+       grub_free (data);
+     }
+ 
+-  grub_dl_unref (my_mod);
++  
+ 
+   return grub_errno;
+ }
+ 
+-static grub_err_t
+-grub_ntfs_uuid (grub_device_t device, char **uuid)
+-{
+-  struct grub_ntfs_data *data;
+-  grub_disk_t disk = device->disk;
+-
+-  grub_dl_ref (my_mod);
+-
+-  data = grub_ntfs_mount (disk);
+-  if (data)
+-    {
+-      char *ptr;
+-      *uuid = grub_xasprintf ("%016llx", (unsigned long long) data->uuid);
+-      if (*uuid)
+-	for (ptr = *uuid; *ptr; ptr++)
+-	  *ptr = grub_toupper (*ptr);
+-      free_file (&data->mmft);
+-      free_file (&data->cmft);
+-      grub_free (data);
+-    }
+-  else
+-    *uuid = NULL;
+-
+-  grub_dl_unref (my_mod);
+-
+-  return grub_errno;
+-}
++
+ 
+ static struct grub_fs grub_ntfs_fs =
+   {
+@@ -1647,7 +1607,7 @@
+     .fs_read = grub_ntfs_read,
+     .fs_close = grub_ntfs_close,
+     .fs_label = grub_ntfs_label,
+-    .fs_uuid = grub_ntfs_uuid,
++
+ #ifdef GRUB_UTIL
+     .reserved_first_sector = 1,
+     .blocklist_install = 1,
+@@ -1657,16 +1617,10 @@
+ 
+ GRUB_MOD_INIT (ntfs)
+ {
+-  if (!grub_is_lockdown ())
+-    {
+-      grub_ntfs_fs.mod = mod;
+-      grub_fs_register (&grub_ntfs_fs);
+-    }
+-  my_mod = mod;
++  grub_fs_register (&grub_ntfs_fs);
+ }
+ 
+ GRUB_MOD_FINI (ntfs)
+ {
+-  if (!grub_is_lockdown ())
+-    grub_fs_unregister (&grub_ntfs_fs);
+-}
++  grub_fs_unregister (&grub_ntfs_fs);
++}
+--- a/grub/grub-core/fs/ntfscomp.c
++++ b/grub/grub-core/fs/ntfscomp.c
+@@ -30,7 +30,7 @@
+ decomp_nextvcn (struct grub_ntfs_comp *cc)
+ {
+   if (cc->comp_head >= cc->comp_tail)
+-    return grub_error (GRUB_ERR_BAD_FS, "compression block overflow");
++    return grub_error (GRUB_ERR_BAD_FS);
+   if (grub_disk_read
+       (cc->disk,
+        (cc->comp_table[cc->comp_head].next_lcn -
+@@ -89,8 +89,7 @@
+ 	  while (cnt > 0)
+ 	    {
+ 	      if (copied > GRUB_NTFS_COM_LEN)
+-		return grub_error (GRUB_ERR_BAD_FS,
+-				   "compression block too large");
++		return grub_error (GRUB_ERR_BAD_FS);
+ 
+ 	      if (!bits)
+ 		{
+@@ -115,7 +114,7 @@
+ 
+ 		  if (!copied)
+ 		    {
+-		      grub_error (GRUB_ERR_BAD_FS, "nontext window empty");
++		      grub_error (GRUB_ERR_BAD_FS);
+ 		      return 0;
+ 		    }
+ 
+@@ -152,8 +151,7 @@
+       else
+ 	{
+ 	  if (cnt != GRUB_NTFS_COM_LEN)
+-	    return grub_error (GRUB_ERR_BAD_FS,
+-			       "invalid compression block size");
++	    return grub_error (GRUB_ERR_BAD_FS);
+ 	}
+     }
+ 
+@@ -191,7 +189,7 @@
+ 
+ 	  if (ctx->comp.comp_head != ctx->comp.comp_tail
+ 	      && !(ctx->flags & GRUB_NTFS_RF_BLNK))
+-	    return grub_error (GRUB_ERR_BAD_FS, "invalid compression block");
++	    return grub_error (GRUB_ERR_BAD_FS);
+ 	  ctx->comp.comp_head = ctx->comp.comp_tail = 0;
+ 	  ctx->comp.cbuf_vcn = ctx->target_vcn;
+ 	  ctx->comp.cbuf_ofs = (1 << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR));
+@@ -227,9 +225,7 @@
+ 		{
+ 		  grub_memset (buf, 0, nn * GRUB_NTFS_COM_LEN);
+ 		  buf += nn * GRUB_NTFS_COM_LEN;
+-		  if (grub_file_progress_hook && ctx->file)
+-		    grub_file_progress_hook (0, 0, nn * GRUB_NTFS_COM_LEN, NULL,
+-					     ctx->file);
++		  
+ 		}
+ 	    }
+ 	  else
+@@ -240,9 +236,7 @@
+ 		    return grub_errno;
+ 		  if (buf)
+ 		    buf += GRUB_NTFS_COM_LEN;
+-		  if (grub_file_progress_hook && ctx->file)
+-		    grub_file_progress_hook (0, 0, GRUB_NTFS_COM_LEN, NULL,
+-					     ctx->file);
++		  
+ 		  nn--;
+ 		}
+ 	    }
+@@ -269,11 +263,7 @@
+ 			 ctx->target_vcn)) << ctx->comp.log_spc, 0,
+ 		       tt << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR), buf))
+ 		    return grub_errno;
+-		  if (grub_file_progress_hook && ctx->file)
+-		    grub_file_progress_hook (0, 0,
+-					     tt << (ctx->comp.log_spc
+-						    + GRUB_NTFS_BLK_SHR), NULL,
+-					     ctx->file);
++		  
+ 		  buf += tt << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR);
+ 		}
+ 	      nn -= tt;
+@@ -292,11 +282,7 @@
+ 		       nn << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR), buf))
+ 		    return grub_errno;
+ 		  buf += nn << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR);
+-		  if (grub_file_progress_hook && ctx->file)
+-		    grub_file_progress_hook (0, 0,
+-					     nn << (ctx->comp.log_spc
+-						    + GRUB_NTFS_BLK_SHR), NULL,
+-					     ctx->file);
++		  
+ 		}
+ 	      ctx->target_vcn += nn;
+ 	    }
+@@ -324,8 +310,7 @@
+ 	    n = len;
+ 
+ 	  grub_memcpy (dest, ctx->attr->sbuf + ofs - ctx->attr->save_pos, n);
+-	  if (grub_file_progress_hook && ctx->file)
+-	    grub_file_progress_hook (0, 0, n, NULL, ctx->file);
++	  
+ 	  if (n == len)
+ 	    return 0;
+ 
+@@ -353,7 +338,7 @@
+   ctx->comp.comp_head = ctx->comp.comp_tail = 0;
+   if (grub_add (ctx->comp.log_spc, GRUB_NTFS_BLK_SHR, &log_sz))
+     {
+-      grub_error (GRUB_ERR_OUT_OF_RANGE, N_("compression buffer size overflow"));
++      grub_error (GRUB_ERR_OUT_OF_RANGE);
+       return 0;
+     }
+   ctx->comp.cbuf = grub_malloc (1 << log_sz);
+@@ -376,9 +361,7 @@
+   if (ofs % GRUB_NTFS_COM_LEN)
+     {
+       grub_uint32_t t, n, o;
+-      void *file = ctx->file;
+-
+-      ctx->file = 0;
++
+ 
+       t = ctx->target_vcn << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR);
+       if (read_block (ctx, ctx->attr->sbuf, 1))
+@@ -387,7 +370,6 @@
+ 	  goto quit;
+ 	}
+ 
+-      ctx->file = file;
+ 
+       ctx->attr->save_pos = t;
+ 
+@@ -396,8 +378,7 @@
+       if (n > len)
+ 	n = len;
+       grub_memcpy (dest, &ctx->attr->sbuf[o], n);
+-      if (grub_file_progress_hook && ctx->file)
+-	grub_file_progress_hook (0, 0, n, NULL, ctx->file);
++      
+       if (n == len)
+ 	goto quit;
+       dest += n;
+@@ -415,9 +396,7 @@
+   if (len)
+     {
+       grub_uint32_t t;
+-      void *file = ctx->file;
+-
+-      ctx->file = 0;
++
+       t = ctx->target_vcn << (ctx->comp.log_spc + GRUB_NTFS_BLK_SHR);
+       if (read_block (ctx, ctx->attr->sbuf, 1))
+ 	{
+@@ -428,8 +407,7 @@
+       ctx->attr->save_pos = t;
+ 
+       grub_memcpy (dest, ctx->attr->sbuf, len);
+-      if (grub_file_progress_hook && file)
+-	grub_file_progress_hook (0, 0, len, NULL, file);
++      
+     }
+ 
+ quit:
+--- a/grub/grub-core/kern/err.c
++++ b/grub/grub-core/kern/err.c
+@@ -18,128 +18,11 @@
+  */
+ 
+ #include <grub/err.h>
+-#include <grub/misc.h>
+-#include <stdarg.h>
+-#include <grub/i18n.h>
+-
+-#define GRUB_ERROR_STACK_SIZE	10
+ 
+ grub_err_t grub_errno;
+-char grub_errmsg[GRUB_MAX_ERRMSG];
+-int grub_err_printed_errors;
+-
+-static struct grub_error_saved grub_error_stack_items[GRUB_ERROR_STACK_SIZE];
+-
+-static int grub_error_stack_pos;
+-static int grub_error_stack_assert;
+-
+-#ifdef grub_error
+-#undef grub_error
+-#endif
+ 
+ grub_err_t
+-grub_user_error (grub_err_t n, const char *fmt, ...)
++grub_error (grub_err_t code)
+ {
+-  va_list ap;
+-
+-  grub_errno = n;
+-
+-  va_start (ap, fmt);
+-  grub_vsnprintf (grub_errmsg, sizeof (grub_errmsg), _(fmt), ap);
+-  va_end (ap);
+-
+-  return n;
++  return grub_errno = code;
+ }
+-
+-grub_err_t
+-grub_error (grub_err_t n, const char *file, const char *function, const int line, const char *fmt, ...)
+-{
+-  va_list ap;
+-  int m;
+-
+-  grub_errno = n;
+-
+-  m = grub_snprintf (grub_errmsg, sizeof (grub_errmsg), "%s:%s:%d:", file, function, line);
+-  if (m < 0)
+-    m = 0;
+-
+-  va_start (ap, fmt);
+-  grub_vsnprintf (grub_errmsg + m, sizeof (grub_errmsg) - m, _(fmt), ap);
+-  va_end (ap);
+-
+-  return n;
+-}
+-
+-void
+-grub_error_push (void)
+-{
+-  /* Only add items to stack, if there is enough room.  */
+-  if (grub_error_stack_pos < GRUB_ERROR_STACK_SIZE)
+-    {
+-      /* Copy active error message to stack.  */
+-      grub_error_stack_items[grub_error_stack_pos].grub_errno = grub_errno;
+-      grub_memcpy (grub_error_stack_items[grub_error_stack_pos].errmsg,
+-                   grub_errmsg,
+-                   sizeof (grub_errmsg));
+-
+-      /* Advance to next error stack position.  */
+-      grub_error_stack_pos++;
+-    }
+-  else
+-    {
+-      /* There is no room for new error message. Discard new error message
+-         and mark error stack assertion flag.  */
+-      grub_error_stack_assert = 1;
+-    }
+-
+-  /* Allow further operation of other components by resetting
+-     active errno to GRUB_ERR_NONE.  */
+-  grub_errno = GRUB_ERR_NONE;
+-}
+-
+-int
+-grub_error_pop (void)
+-{
+-  if (grub_error_stack_pos > 0)
+-    {
+-      /* Pop error message from error stack to current active error.  */
+-      grub_error_stack_pos--;
+-
+-      grub_errno = grub_error_stack_items[grub_error_stack_pos].grub_errno;
+-      grub_memcpy (grub_errmsg,
+-                   grub_error_stack_items[grub_error_stack_pos].errmsg,
+-                   sizeof (grub_errmsg));
+-
+-      return 1;
+-    }
+-  else
+-    {
+-      /* There is no more items on error stack, reset to no error state.  */
+-      grub_errno = GRUB_ERR_NONE;
+-
+-      return 0;
+-    }
+-}
+-
+-void
+-grub_print_error (void)
+-{
+-  /* Print error messages in reverse order. First print active error message
+-     and then empty error stack.  */
+-  do
+-    {
+-      if (grub_errno != GRUB_ERR_NONE)
+-	{
+-	  grub_err_printf (_("error: %s.\n"), grub_errmsg);
+-	  grub_err_printed_errors++;
+-	}
+-    }
+-  while (grub_error_pop ());
+-
+-  /* If there was an assert while using error stack, report about it.  */
+-  if (grub_error_stack_assert)
+-    {
+-      grub_err_printf ("assert: error stack overflow detected!\n");
+-      grub_error_stack_assert = 0;
+-    }
+-}
+--- a/grub/grub-core/kern/misc.c
++++ b/grub/grub-core/kern/misc.c
+@@ -18,70 +18,11 @@
+  */
+ 
+ #include <grub/misc.h>
+-#include <grub/err.h>
+ #include <grub/mm.h>
+-#include <stdarg.h>
+-#include <grub/term.h>
+-#include <grub/env.h>
+-#include <grub/i18n.h>
+-#include <grub/types.h>
+-#include <grub/charset.h>
+-#include <stddef.h>
+-
+-union printf_arg
+-{
+-  /* Yes, type is also part of union as the moment we fill the value
+-     we don't need to store its type anymore (when we'll need it, we'll
+-     have format spec again. So save some space.  */
+-  enum
+-    {
+-      INT, LONG, LONGLONG,
+-      UNSIGNED_INT = 3, UNSIGNED_LONG, UNSIGNED_LONGLONG,
+-      STRING,
+-      UUID
+-    } type;
+-  long long ll;
+-};
+-
+-struct printf_args
+-{
+-  union printf_arg prealloc[32];
+-  union printf_arg *ptr;
+-  grub_size_t count;
+-};
+-
+-static void
+-parse_printf_args (const char *fmt0, struct printf_args *args,
+-		   va_list args_in);
+-static int
+-grub_vsnprintf_real (char *str, grub_size_t max_len, const char *fmt0,
+-		     struct printf_args *args);
+-
+-static void
+-free_printf_args (struct printf_args *args)
+-{
+-  if (args->ptr != args->prealloc)
+-    grub_free (args->ptr);
+-}
+-
+-static int
+-grub_iswordseparator (int c)
+-{
+-  return (grub_isspace (c) || c == ',' || c == ';' || c == '|' || c == '&');
+-}
+-
+-/* grub_gettext_dummy is not translating anything.  */
+-static const char *
+-grub_gettext_dummy (const char *s)
+-{
+-  return s;
+-}
+-
+-const char* (*grub_gettext) (const char *s) = grub_gettext_dummy;
+ 
+ #define ALIGN_MASK (sizeof (grub_addr_t) - 1)
+-/* Set the threshold to (2 * sizeof(grub_addr_t)) to guarantee at least one word copy. */
+ #define WORD_COPY_THRES (sizeof (grub_addr_t) * 2)
++#define VOLATILE_CLANG volatile
+ 
+ static void *
+ memmove_fwd (void *dest, const void *src, grub_size_t n)
+@@ -196,181 +137,6 @@
+ }
+ 
+ int
+-grub_printf (const char *fmt, ...)
+-{
+-  va_list ap;
+-  int ret;
+-
+-#if defined(MM_DEBUG) && !defined(GRUB_UTIL) && !defined (GRUB_MACHINE_EMU)
+-  /*
+-   * To prevent infinite recursion when grub_mm_debug is on, disable it
+-   * when calling grub_vprintf(). One such call loop is:
+-   *   grub_vprintf() -> parse_printf_args() -> parse_printf_arg_fmt() ->
+-   *     grub_debug_calloc() -> grub_printf() -> grub_vprintf().
+-   */
+-  int grub_mm_debug_save = 0;
+-
+-  if (grub_mm_debug)
+-    {
+-      grub_mm_debug_save = grub_mm_debug;
+-      grub_mm_debug = 0;
+-    }
+-#endif
+-
+-  va_start (ap, fmt);
+-  ret = grub_vprintf (fmt, ap);
+-  va_end (ap);
+-
+-#if defined(MM_DEBUG) && !defined(GRUB_UTIL) && !defined (GRUB_MACHINE_EMU)
+-  grub_mm_debug = grub_mm_debug_save;
+-#endif
+-
+-  return ret;
+-}
+-
+-int
+-grub_printf_ (const char *fmt, ...)
+-{
+-  va_list ap;
+-  int ret;
+-
+-  va_start (ap, fmt);
+-  ret = grub_vprintf (_(fmt), ap);
+-  va_end (ap);
+-
+-  return ret;
+-}
+-
+-int
+-grub_puts_ (const char *s)
+-{
+-  return grub_puts (_(s));
+-}
+-
+-#if ( defined (__APPLE__) || defined (_MSC_VER) ) && ! defined (GRUB_UTIL)
+-int
+-grub_err_printf (const char *fmt, ...)
+-{
+-	va_list ap;
+-	int ret;
+-
+-	va_start (ap, fmt);
+-	ret = grub_vprintf (fmt, ap);
+-	va_end (ap);
+-
+-	return ret;
+-}
+-#endif
+-
+-#if ! defined (__APPLE__) && ! defined (_MSC_VER) && ! defined (GRUB_UTIL)
+-int grub_err_printf (const char *fmt, ...)
+-__attribute__ ((alias("grub_printf")));
+-#endif
+-
+-int
+-grub_debug_enabled (const char * condition)
+-{
+-  const char *debug, *found;
+-  grub_size_t clen;
+-  int ret = 0;
+-
+-  debug = grub_env_get ("debug");
+-  if (!debug)
+-    return 0;
+-
+-  if (grub_strword (debug, "all"))
+-    {
+-      if (debug[3] == '\0')
+-	return 1;
+-      ret = 1;
+-    }
+-
+-  clen = grub_strlen (condition);
+-  found = debug-1;
+-  while(1)
+-    {
+-      found = grub_strstr (found+1, condition);
+-
+-      if (found == NULL)
+-	break;
+-
+-      /* Found condition is not a whole word, so ignore it. */
+-      if (*(found + clen) != '\0' && *(found + clen) != ','
+-	 && !grub_isspace (*(found + clen)))
+-	continue;
+-
+-      /*
+-       * If found condition is at the start of debug or the start is on a word
+-       * boundary, then enable debug. Else if found condition is prefixed with
+-       * '-' and the start is on a word boundary, then disable debug. If none
+-       * of these cases, ignore.
+-       */
+-      if (found == debug || *(found - 1) == ',' || grub_isspace (*(found - 1)))
+-	ret = 1;
+-      else if (*(found - 1) == '-' && ((found == debug + 1) || (*(found - 2) == ','
+-			       || grub_isspace (*(found - 2)))))
+-	ret = 0;
+-    }
+-
+-  return ret;
+-}
+-
+-void
+-grub_real_dprintf (const char *file, const char *function, const int line, const char *condition,
+-		   const char *fmt, ...)
+-{
+-  va_list args;
+-
+-  if (grub_debug_enabled (condition))
+-    {
+-      grub_printf ("%s:%s:%d:%s: ", file, function, line, condition);
+-      va_start (args, fmt);
+-      grub_vprintf (fmt, args);
+-      va_end (args);
+-      grub_refresh ();
+-    }
+-}
+-
+-#define PREALLOC_SIZE 255
+-
+-int
+-grub_vprintf (const char *fmt, va_list ap)
+-{
+-  grub_size_t s;
+-  static char buf[PREALLOC_SIZE + 1];
+-  char *curbuf = buf;
+-  struct printf_args args;
+-
+-  parse_printf_args (fmt, &args, ap);
+-
+-  s = grub_vsnprintf_real (buf, PREALLOC_SIZE, fmt, &args);
+-  if (s > PREALLOC_SIZE)
+-    {
+-      curbuf = grub_malloc (s + 1);
+-      if (!curbuf)
+-	{
+-	  grub_errno = GRUB_ERR_NONE;
+-	  buf[PREALLOC_SIZE - 3] = '.';
+-	  buf[PREALLOC_SIZE - 2] = '.';
+-	  buf[PREALLOC_SIZE - 1] = '.';
+-	  buf[PREALLOC_SIZE] = 0;
+-	  curbuf = buf;
+-	}
+-      else
+-	s = grub_vsnprintf_real (curbuf, s, fmt, &args);
+-    }
+-
+-  free_printf_args (&args);
+-
+-  grub_xputs (curbuf);
+-
+-  if (curbuf != buf)
+-    grub_free (curbuf);
+-
+-  return s;
+-}
+-
+-int
+ grub_memcmp (const void *s1, const void *s2, grub_size_t n)
+ {
+   const grub_uint8_t *t1 = s1;
+@@ -447,208 +213,6 @@
+   while (*s++);
+ 
+   return p;
+-}
+-
+-int
+-grub_strword (const char *haystack, const char *needle)
+-{
+-  const char *n_pos = needle;
+-
+-  while (grub_iswordseparator (*haystack))
+-    haystack++;
+-
+-  while (*haystack)
+-    {
+-      /* Crawl both the needle and the haystack word we're on.  */
+-      while(*haystack && !grub_iswordseparator (*haystack)
+-            && *haystack == *n_pos)
+-        {
+-          haystack++;
+-          n_pos++;
+-        }
+-
+-      /* If we reached the end of both words at the same time, the word
+-      is found. If not, eat everything in the haystack that isn't the
+-      next word (or the end of string) and "reset" the needle.  */
+-      if ( (!*haystack || grub_iswordseparator (*haystack))
+-         && (!*n_pos || grub_iswordseparator (*n_pos)))
+-        return 1;
+-      else
+-        {
+-          n_pos = needle;
+-          while (*haystack && !grub_iswordseparator (*haystack))
+-            haystack++;
+-          while (grub_iswordseparator (*haystack))
+-            haystack++;
+-        }
+-    }
+-
+-  return 0;
+-}
+-
+-char *
+-grub_strtok_r (char *s, const char *delim, char **save_ptr)
+-{
+-  char *token;
+-  const char *c;
+-  bool is_delim;
+-
+-  if (s == NULL)
+-    s = *save_ptr;
+-
+-  /* Scan leading delimiters. */
+-  while (*s != '\0')
+-    {
+-      is_delim = false;
+-      for (c = delim; *c != '\0'; c++)
+-	{
+-	  if (*s == *c)
+-	    {
+-	      is_delim = true;
+-	      break;
+-	    }
+-	}
+-      if (is_delim == true)
+-	s++;
+-      else
+-	break;
+-    }
+-
+-  if (*s == '\0')
+-    {
+-      *save_ptr = s;
+-      return NULL;
+-    }
+-
+-  /* Find the end of the token. */
+-  token = s;
+-  while (*s != '\0')
+-    {
+-      for (c = delim; *c != '\0'; c++)
+-	{
+-	  if (*s == *c)
+-	    {
+-	      *s = '\0';
+-	      *save_ptr = s + 1;
+-	      return token;
+-	    }
+-	}
+-      s++;
+-    }
+-
+-  *save_ptr = s;
+-  return token;
+-}
+-
+-char *
+-grub_strtok (char *s, const char *delim)
+-{
+-  static char *last;
+-
+-  return grub_strtok_r (s, delim, &last);
+-}
+-
+-int
+-grub_isspace (int c)
+-{
+-  return (c == '\n' || c == '\r' || c == ' ' || c == '\t');
+-}
+-
+-unsigned long
+-grub_strtoul (const char * restrict str, const char ** const restrict end,
+-	      int base)
+-{
+-  unsigned long long num;
+-
+-  num = grub_strtoull (str, end, base);
+-#if GRUB_CPU_SIZEOF_LONG != 8
+-  if (num > ~0UL)
+-    {
+-      grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
+-      return ~0UL;
+-    }
+-#endif
+-
+-  return (unsigned long) num;
+-}
+-
+-unsigned long long
+-grub_strtoull (const char * restrict str, const char ** const restrict end,
+-	       int base)
+-{
+-  unsigned long long num = 0;
+-  int found = 0;
+-
+-  /* Skip white spaces.  */
+-  /* grub_isspace checks that *str != '\0'.  */
+-  while (grub_isspace (*str))
+-    str++;
+-
+-  /* Guess the base, if not specified. The prefix `0x' means 16, and
+-     the prefix `0' means 8.  */
+-  if (str[0] == '0')
+-    {
+-      if (str[1] == 'x')
+-	{
+-	  if (base == 0 || base == 16)
+-	    {
+-	      base = 16;
+-	      str += 2;
+-	    }
+-	}
+-      else if (base == 0 && str[1] >= '0' && str[1] <= '7')
+-	base = 8;
+-    }
+-
+-  if (base == 0)
+-    base = 10;
+-
+-  while (*str)
+-    {
+-      unsigned long digit;
+-
+-      digit = grub_tolower (*str) - '0';
+-      if (digit >= 'a' - '0')
+-	digit += '0' - 'a' + 10;
+-      else if (digit > 9)
+-	break;
+-
+-      if (digit >= (unsigned long) base)
+-	break;
+-
+-      found = 1;
+-
+-      /* NUM * BASE + DIGIT > ~0ULL */
+-      if (num > grub_divmod64 (~0ULL - digit, base, 0))
+-	{
+-	  grub_error (GRUB_ERR_OUT_OF_RANGE,
+-		      N_("overflow is detected"));
+-
+-          if (end)
+-            *end = (char *) str;
+-
+-	  return ~0ULL;
+-	}
+-
+-      num = num * base + digit;
+-      str++;
+-    }
+-
+-  if (! found)
+-    {
+-      grub_error (GRUB_ERR_BAD_NUMBER,
+-		  N_("unrecognized number"));
+-
+-      if (end)
+-        *end = (char *) str;
+-
+-      return 0;
+-    }
+-
+-  if (end)
+-    *end = (char *) str;
+-
+-  return num;
+ }
+ 
+ char *
+@@ -682,15 +246,6 @@
+   p[len] = '\0';
+   return p;
+ }
+-
+-/* clang detects that we're implementing here a memset so it decides to
+-   optimise and calls memset resulting in infinite recursion. With volatile
+-   we make it not optimise in this way.  */
+-#ifdef __clang__
+-#define VOLATILE_CLANG volatile
+-#else
+-#define VOLATILE_CLANG
+-#endif
+ 
+ void *
+ grub_memset (void *s, int c, grub_size_t len)
+@@ -741,831 +296,10 @@
+   return p - s;
+ }
+ 
+-static inline void
+-grub_reverse (char *str)
+-{
+-  char *p = str + grub_strlen (str) - 1;
+-
+-  while (str < p)
+-    {
+-      char tmp;
+-
+-      tmp = *str;
+-      *str = *p;
+-      *p = tmp;
+-      str++;
+-      p--;
+-    }
+-}
+-
+-/* Divide N by D, return the quotient, and store the remainder in *R.  */
+ grub_uint64_t
+-grub_divmod64 (grub_uint64_t n, grub_uint64_t d, grub_uint64_t *r)
+-{
+-  /* This algorithm is typically implemented by hardware. The idea
+-     is to get the highest bit in N, 64 times, by keeping
+-     upper(N * 2^i) = (Q * D + M), where upper
+-     represents the high 64 bits in 128-bits space.  */
+-  unsigned bits = 64;
+-  grub_uint64_t q = 0;
+-  grub_uint64_t m = 0;
+-
+-  /* ARM and IA64 don't have a fast 32-bit division.
+-     Using that code would just make us use software division routines, calling
+-     ourselves indirectly and hence getting infinite recursion.
+-  */
+-#if !GRUB_DIVISION_IN_SOFTWARE || defined(__mips__)
+-  /* Skip the slow computation if 32-bit arithmetic is possible.  */
+-  if (n < 0xffffffff && d < 0xffffffff)
+-    {
+-      if (r)
+-	*r = ((grub_uint32_t) n) % (grub_uint32_t) d;
+-
+-      return ((grub_uint32_t) n) / (grub_uint32_t) d;
+-    }
+-#endif
+-
+-  while (bits--)
+-    {
+-      m <<= 1;
+-
+-      if (n & (1ULL << 63))
+-	m |= 1;
+-
+-      q <<= 1;
+-      n <<= 1;
+-
+-      if (m >= d)
+-	{
+-	  q |= 1;
+-	  m -= d;
+-	}
+-    }
+-
+-  if (r)
+-    *r = m;
+-
+-  return q;
+-}
+-
+-/* Convert a long long value to a string. This function avoids 64-bit
+-   modular arithmetic or divisions.  */
+-static inline char *
+-grub_lltoa (char *str, int c, unsigned long long n)
+-{
+-  unsigned base = ((c == 'x') || (c == 'X')) ? 16 : ((c == 'o') ? 8 : 10);
+-  char *p;
+-
+-  if ((long long) n < 0 && c == 'd')
+-    {
+-      n = (unsigned long long) (-((long long) n));
+-      *str++ = '-';
+-    }
+-
+-  p = str;
+-
+-  if (base == 16)
+-    do
+-      {
+-	unsigned d = (unsigned) (n & 0xf);
+-	*p++ = (d > 9) ? (d + ((c == 'x') ? 'a' : 'A') - 10) : d + '0';
+-      }
+-    while (n >>= 4);
+-  else if (base == 8)
+-    do
+-      {
+-	*p++ = ((unsigned) (n & 0x7)) + '0';
+-      }
+-    while (n >>= 3);
+-  else
+-    /* BASE == 10 */
+-    do
+-      {
+-	grub_uint64_t m;
+-
+-	n = grub_divmod64 (n, 10, &m);
+-	*p++ = m + '0';
+-      }
+-    while (n);
+-
+-  *p = 0;
+-
+-  grub_reverse (str);
+-  return p;
+-}
+-
+-/*
+- * Parse printf() fmt0 string into args arguments.
+- *
+- * The parsed arguments are either used by a printf() function to format the fmt0
+- * string or they are used to compare a format string from an untrusted source
+- * against a format string with expected arguments.
+- *
+- * When the fmt_check is set to !0, e.g. 1, then this function is executed in
+- * printf() format check mode. This enforces stricter rules for parsing the
+- * fmt0 to limit exposure to possible errors in printf() handling. It also
+- * disables positional parameters, "$", because some formats, e.g "%s%1$d",
+- * cannot be validated with the current implementation.
+- *
+- * The max_args allows to set a maximum number of accepted arguments. If the fmt0
+- * string defines more arguments than the max_args then the parse_printf_arg_fmt()
+- * function returns an error. This is currently used for format check only.
+- */
+-static grub_err_t
+-parse_printf_arg_fmt (const char *fmt0, struct printf_args *args,
+-		      int fmt_check, grub_size_t max_args)
+-{
+-  const char *fmt;
+-  char c;
+-  grub_size_t n = 0;
+-
+-  args->count = 0;
+-
+-  COMPILE_TIME_ASSERT (sizeof (int) == sizeof (grub_uint32_t));
+-  COMPILE_TIME_ASSERT (sizeof (int) <= sizeof (long long));
+-  COMPILE_TIME_ASSERT (sizeof (long) <= sizeof (long long));
+-  COMPILE_TIME_ASSERT (sizeof (long long) == sizeof (void *)
+-		       || sizeof (int) == sizeof (void *));
+-  COMPILE_TIME_ASSERT (sizeof (size_t) == sizeof (unsigned)
+-		       || sizeof (size_t) == sizeof (unsigned long)
+-		       || sizeof (size_t) == sizeof (unsigned long long));
+-
+-  fmt = fmt0;
+-  while ((c = *fmt++) != 0)
+-    {
+-      if (c != '%')
+-	continue;
+-
+-      if (*fmt =='-')
+-	fmt++;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      if (*fmt == '$')
+-	{
+-	  if (fmt_check)
+-	    return grub_error (GRUB_ERR_BAD_ARGUMENT,
+-			       "positional arguments are not supported");
+-	  fmt++;
+-	}
+-
+-      if (*fmt =='-')
+-	fmt++;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      if (*fmt =='.')
+-	fmt++;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      c = *fmt++;
+-      if (c == 'z')
+-	{
+-	  c = *fmt++;
+-	  goto do_count;
+-	}
+-      if (c == 'l')
+-	c = *fmt++;
+-      if (c == 'l')
+-	c = *fmt++;
+-
+- do_count:
+-      switch (c)
+-	{
+-	case 'p':
+-	  if (*(fmt) == 'G')
+-	    ++fmt;
+-	  /* Fall through. */
+-	case 'x':
+-	case 'X':
+-	case 'u':
+-	case 'd':
+-	case 'o':
+-	case 'c':
+-	case 'C':
+-	case 's':
+-	  args->count++;
+-	  break;
+-	case '%':
+-	  /* "%%" is the escape sequence to output "%". */
+-	  break;
+-	default:
+-	  if (fmt_check)
+-	    return grub_error (GRUB_ERR_BAD_ARGUMENT, "unexpected format");
+-	  break;
+-	}
+-    }
+-
+-  if (fmt_check && args->count > max_args)
+-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "too many arguments");
+-
+-  if (args->count <= ARRAY_SIZE (args->prealloc))
+-    args->ptr = args->prealloc;
+-  else
+-    {
+-      args->ptr = grub_calloc (args->count, sizeof (args->ptr[0]));
+-      if (!args->ptr)
+-	{
+-	  if (fmt_check)
+-	    return grub_errno;
+-
+-	  grub_errno = GRUB_ERR_NONE;
+-	  args->ptr = args->prealloc;
+-	  args->count = ARRAY_SIZE (args->prealloc);
+-	}
+-    }
+-
+-  grub_memset (args->ptr, 0, args->count * sizeof (args->ptr[0]));
+-
+-  fmt = fmt0;
+-  n = 0;
+-  while ((c = *fmt++) != 0)
+-    {
+-      int longfmt = 0;
+-      unsigned long curn;
+-      const char *p;
+-
+-      if (c != '%')
+-	continue;
+-
+-      curn = n++;
+-
+-      if (*fmt =='-')
+-	fmt++;
+-
+-      p = fmt;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      if (*fmt == '$')
+-	{
+-	  curn = grub_strtoul (p, 0, 10);
+-	  if (curn == 0)
+-	    continue;
+-	  curn--;
+-	  fmt++;
+-	}
+-
+-      if (*fmt =='-')
+-	fmt++;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      if (*fmt =='.')
+-	fmt++;
+-
+-      while (grub_isdigit (*fmt))
+-	fmt++;
+-
+-      c = *fmt++;
+-      if (c == '%')
+-	{
+-	  n--;
+-	  continue;
+-	}
+-
+-      if (c == 'z')
+-	{
+-	  c = *fmt++;
+-	  if (sizeof (size_t) == sizeof (unsigned long))
+-	    longfmt = 1;
+-	  else if (sizeof (size_t) == sizeof (unsigned long long))
+-	    longfmt = 2;
+-	}
+-      if (c == 'l')
+-	{
+-	  c = *fmt++;
+-	  longfmt = 1;
+-	}
+-      if (c == 'l')
+-	{
+-	  c = *fmt++;
+-	  longfmt = 2;
+-	}
+-      if (curn >= args->count)
+-	continue;
+-      switch (c)
+-	{
+-	case 'x':
+-	case 'X':
+-	case 'o':
+-	case 'u':
+-	  args->ptr[curn].type = UNSIGNED_INT + longfmt;
+-	  break;
+-	case 'd':
+-	  args->ptr[curn].type = INT + longfmt;
+-	  break;
+-	case 'p':
+-	  if (sizeof (void *) == sizeof (long long))
+-	    args->ptr[curn].type = UNSIGNED_LONGLONG;
+-	  else
+-	    args->ptr[curn].type = UNSIGNED_INT;
+-	  if (*(fmt) == 'G') {
+-	    args->ptr[curn].type = UUID;
+-	    ++fmt;
+-	  }
+-	  break;
+-	case 's':
+-	  args->ptr[curn].type = STRING;
+-	  break;
+-	case 'C':
+-	case 'c':
+-	  args->ptr[curn].type = INT;
+-	  break;
+-	}
+-    }
+-
+-  return GRUB_ERR_NONE;
+-}
+-
+-static void
+-parse_printf_args (const char *fmt0, struct printf_args *args, va_list args_in)
+-{
+-  grub_size_t n;
+-
+-  parse_printf_arg_fmt (fmt0, args, 0, 0);
+-
+-  for (n = 0; n < args->count; n++)
+-    switch (args->ptr[n].type)
+-      {
+-      case INT:
+-	args->ptr[n].ll = va_arg (args_in, int);
+-	break;
+-      case LONG:
+-	args->ptr[n].ll = va_arg (args_in, long);
+-	break;
+-      case UNSIGNED_INT:
+-	args->ptr[n].ll = va_arg (args_in, unsigned int);
+-	break;
+-      case UNSIGNED_LONG:
+-	args->ptr[n].ll = va_arg (args_in, unsigned long);
+-	break;
+-      case LONGLONG:
+-      case UNSIGNED_LONGLONG:
+-	args->ptr[n].ll = va_arg (args_in, long long);
+-	break;
+-      case STRING:
+-      case UUID:
+-	if (sizeof (void *) == sizeof (long long))
+-	  args->ptr[n].ll = va_arg (args_in, long long);
+-	else
+-	  args->ptr[n].ll = va_arg (args_in, unsigned int);
+-	break;
+-      }
+-}
+-
+-static inline void __attribute__ ((always_inline))
+-write_char (char *str, grub_size_t *count, grub_size_t max_len, unsigned char ch)
+-{
+-  if (*count < max_len)
+-    str[*count] = ch;
+-
+-  (*count)++;
+-}
+-
+-static void
+-write_number (char *str, grub_size_t *count, grub_size_t max_len, grub_size_t format1,
+-	     char rightfill, char zerofill, char c, long long value)
+-{
+-  char tmp[32];
+-  const char *p = tmp;
+-  grub_size_t len;
+-  grub_size_t fill;
+-
+-  len = grub_lltoa (tmp, c, value) - tmp;
+-  fill = len < format1 ? format1 - len : 0;
+-  if (! rightfill)
+-    while (fill--)
+-      write_char (str, count, max_len, zerofill);
+-  while (*p)
+-    write_char (str, count, max_len, *p++);
+-  if (rightfill)
+-    while (fill--)
+-      write_char (str, count, max_len, zerofill);
+-}
+-
+-static int
+-grub_vsnprintf_real (char *str, grub_size_t max_len, const char *fmt0,
+-		     struct printf_args *args)
+-{
+-  char c;
+-  grub_size_t n = 0;
+-  grub_size_t count = 0;
+-  const char *fmt;
+-
+-  fmt = fmt0;
+-
+-  while ((c = *fmt++) != 0)
+-    {
+-      unsigned int format1 = 0;
+-      unsigned int format2 = ~ 0U;
+-      char zerofill = ' ';
+-      char rightfill = 0;
+-      grub_size_t curn;
+-
+-      if (c != '%')
+-	{
+-	  write_char (str, &count, max_len, c);
+-	  continue;
+-	}
+-
+-      curn = n++;
+-
+-    rescan:;
+-
+-      if (*fmt =='-')
+-	{
+-	  rightfill = 1;
+-	  fmt++;
+-	}
+-
+-      /* Read formatting parameters.  */
+-      if (grub_isdigit (*fmt))
+-	{
+-	  if (fmt[0] == '0')
+-	    zerofill = '0';
+-	  format1 = grub_strtoul (fmt, &fmt, 10);
+-	}
+-
+-      if (*fmt == '.')
+-	fmt++;
+-
+-      if (grub_isdigit (*fmt))
+-	format2 = grub_strtoul (fmt, &fmt, 10);
+-
+-      if (*fmt == '$')
+-	{
+-	  if (format1 == 0)
+-	    continue;
+-	  curn = format1 - 1;
+-	  fmt++;
+-	  format1 = 0;
+-	  format2 = ~ 0U;
+-	  zerofill = ' ';
+-	  rightfill = 0;
+-
+-	  goto rescan;
+-	}
+-
+-      c = *fmt++;
+-      if (c == 'z')
+-	c = *fmt++;
+-      if (c == 'l')
+-	c = *fmt++;
+-      if (c == 'l')
+-	c = *fmt++;
+-
+-      if (c == '%')
+-	{
+-	  write_char (str, &count, max_len, c);
+-	  n--;
+-	  continue;
+-	}
+-
+-      if (curn >= args->count)
+-	continue;
+-
+-      long long curarg = args->ptr[curn].ll;
+-
+-      switch (c)
+-	{
+-	case 'p':
+-	  if (*(fmt) == 'G')
+-	    {
+-	      ++fmt;
+-	      grub_packed_guid_t *guid = (grub_packed_guid_t *)(grub_addr_t) curarg;
+-	      write_number (str, &count, max_len, 8, 0, '0', 'x', guid->data1);
+-	      write_char (str, &count, max_len, '-');
+-	      write_number (str, &count, max_len, 4, 0, '0', 'x', guid->data2);
+-	      write_char (str, &count, max_len, '-');
+-	      write_number (str, &count, max_len, 4, 0, '0', 'x', guid->data3);
+-	      write_char (str, &count, max_len, '-');
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[0]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[1]);
+-	      write_char (str, &count, max_len, '-');
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[2]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[3]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[4]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[5]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[6]);
+-	      write_number (str, &count, max_len, 2, 0, '0', 'x', guid->data4[7]);
+-	      break;
+-	    }
+-	  else
+-	    {
+-	      write_char (str, &count, max_len, '0');
+-	      write_char (str, &count, max_len, 'x');
+-	      c = 'x';
+-	    }
+-	  /* Fall through. */
+-	case 'x':
+-	case 'X':
+-	case 'u':
+-	case 'd':
+-	case 'o':
+-	  write_number (str, &count, max_len, format1, rightfill, zerofill, c, curarg);
+-	  break;
+-
+-	case 'c':
+-	  write_char (str, &count, max_len, curarg & 0xff);
+-	  break;
+-
+-	case 'C':
+-	  {
+-	    grub_uint32_t code = curarg;
+-	    int shift;
+-	    unsigned mask;
+-
+-	    if (code <= 0x7f)
+-	      {
+-		shift = 0;
+-		mask = 0;
+-	      }
+-	    else if (code <= 0x7ff)
+-	      {
+-		shift = 6;
+-		mask = 0xc0;
+-	      }
+-	    else if (code <= 0xffff)
+-	      {
+-		shift = 12;
+-		mask = 0xe0;
+-	      }
+-	    else if (code <= 0x10ffff)
+-	      {
+-		shift = 18;
+-		mask = 0xf0;
+-	      }
+-	    else
+-	      {
+-		code = '?';
+-		shift = 0;
+-		mask = 0;
+-	      }
+-
+-	    write_char (str, &count, max_len, mask | (code >> shift));
+-
+-	    for (shift -= 6; shift >= 0; shift -= 6)
+-	      write_char (str, &count, max_len, 0x80 | (0x3f & (code >> shift)));
+-	  }
+-	  break;
+-
+-	case 's':
+-	  {
+-	    grub_size_t len = 0;
+-	    grub_size_t fill;
+-	    const char *p = (curarg != 0) ? ((char *) (grub_addr_t) curarg) : "(null)";
+-	    grub_size_t i;
+-
+-	    while (len < format2 && p[len])
+-	      len++;
+-
+-	    fill = len < format1 ? format1 - len : 0;
+-
+-	    if (!rightfill)
+-	      while (fill--)
+-		write_char (str, &count, max_len, zerofill);
+-
+-	    for (i = 0; i < len; i++)
+-	      write_char (str, &count, max_len, *p++);
+-
+-	    if (rightfill)
+-	      while (fill--)
+-		write_char (str, &count, max_len, zerofill);
+-	  }
+-
+-	  break;
+-
+-	default:
+-	  write_char (str, &count, max_len, c);
+-	  break;
+-	}
+-    }
+-
+-  if (count < max_len)
+-    str[count] = '\0';
+-  else
+-    str[max_len] = '\0';
+-  return count;
+-}
+-
+-int
+-grub_vsnprintf (char *str, grub_size_t n, const char *fmt, va_list ap)
+-{
+-  grub_size_t ret;
+-  struct printf_args args;
+-
+-  if (!n)
+-    return 0;
+-
+-  n--;
+-
+-  parse_printf_args (fmt, &args, ap);
+-
+-  ret = grub_vsnprintf_real (str, n, fmt, &args);
+-
+-  free_printf_args (&args);
+-
+-  return ret;
+-}
+-
+-int
+-grub_snprintf (char *str, grub_size_t n, const char *fmt, ...)
+-{
+-  va_list ap;
+-  int ret;
+-
+-  va_start (ap, fmt);
+-  ret = grub_vsnprintf (str, n, fmt, ap);
+-  va_end (ap);
+-
+-  return ret;
+-}
+-
+-char *
+-grub_xvasprintf (const char *fmt, va_list ap)
+-{
+-  grub_size_t s, as = PREALLOC_SIZE;
+-  char *ret;
+-  struct printf_args args;
+-
+-  parse_printf_args (fmt, &args, ap);
+-
+-  while (1)
+-    {
+-      ret = grub_malloc (as + 1);
+-      if (!ret)
+-	{
+-	  free_printf_args (&args);
+-	  return NULL;
+-	}
+-
+-      s = grub_vsnprintf_real (ret, as, fmt, &args);
+-
+-      if (s <= as)
+-	{
+-	  free_printf_args (&args);
+-	  return ret;
+-	}
+-
+-      grub_free (ret);
+-      as = s;
+-    }
+-}
+-
+-char *
+-grub_xasprintf (const char *fmt, ...)
+-{
+-  va_list ap;
+-  char *ret;
+-
+-  va_start (ap, fmt);
+-  ret = grub_xvasprintf (fmt, ap);
+-  va_end (ap);
+-
+-  return ret;
+-}
+-
+-grub_err_t
+-grub_printf_fmt_check (const char *fmt, const char *fmt_expected)
+-{
+-  struct printf_args args_expected, args_fmt;
+-  grub_err_t ret;
+-  grub_size_t n;
+-
+-  if (fmt == NULL || fmt_expected == NULL)
+-    return grub_error (GRUB_ERR_BAD_ARGUMENT, "invalid format");
+-
+-  ret = parse_printf_arg_fmt (fmt_expected, &args_expected, 1, GRUB_SIZE_MAX);
+-  if (ret != GRUB_ERR_NONE)
+-    return ret;
+-
+-  /* Limit parsing to the number of expected arguments. */
+-  ret = parse_printf_arg_fmt (fmt, &args_fmt, 1, args_expected.count);
+-  if (ret != GRUB_ERR_NONE)
+-    {
+-      free_printf_args (&args_expected);
+-      return ret;
+-    }
+-
+-  for (n = 0; n < args_fmt.count; n++)
+-    if (args_fmt.ptr[n].type != args_expected.ptr[n].type)
+-     {
+-	ret = grub_error (GRUB_ERR_BAD_ARGUMENT, "arguments types do not match");
+-	break;
+-     }
+-
+-  free_printf_args (&args_expected);
+-  free_printf_args (&args_fmt);
+-
+-  return ret;
+-}
+-
+-
+-/* Abort GRUB. This function does not return.  */
+-void __attribute__ ((noreturn))
+-grub_abort (void)
+-{
+-  grub_printf ("\nAborted.");
+-
+-#ifndef GRUB_UTIL
+-  if (grub_term_inputs)
+-#endif
+-    {
+-      grub_printf (" Press any key to exit.");
+-      grub_getkey ();
+-    }
+-
+-  grub_exit ();
+-}
+-
+-void
+-grub_fatal (const char *fmt, ...)
+-{
+-  va_list ap;
+-
+-  va_start (ap, fmt);
+-  grub_vprintf (_(fmt), ap);
+-  va_end (ap);
+-
+-  grub_refresh ();
+-
+-  grub_abort ();
+-}
+-
+-grub_ssize_t
+-grub_utf8_to_utf16_alloc (const char *str8, grub_uint16_t **utf16_msg, grub_uint16_t **last_position)
+-{
+-  grub_size_t len;
+-  grub_size_t len16;
+-
+-  len = grub_strlen (str8);
+-
+-  /* Check for integer overflow */
+-  if (len > GRUB_SSIZE_MAX / GRUB_MAX_UTF16_PER_UTF8 - 1)
+-    {
+-      grub_error (GRUB_ERR_BAD_ARGUMENT, N_("string too long"));
+-      *utf16_msg = NULL;
+-      return -1;
+-    }
+-
+-  len16 = len * GRUB_MAX_UTF16_PER_UTF8;
+-
+-  *utf16_msg = grub_calloc (len16 + 1, sizeof (*utf16_msg[0]));
+-  if (*utf16_msg == NULL)
+-    return -1;
+-
+-  len16 = grub_utf8_to_utf16 (*utf16_msg, len16, (grub_uint8_t *) str8, len, NULL);
+-
+-  if (last_position != NULL)
+-    *last_position = *utf16_msg + len16;
+-
+-  return len16;
+-}
+-
+-
+-#if BOOT_TIME_STATS
+-
+-#include <grub/time.h>
+-
+-struct grub_boot_time *grub_boot_time_head;
+-static struct grub_boot_time **boot_time_last = &grub_boot_time_head;
+-
+-void
+-grub_real_boot_time (const char *file,
+-		     const int line,
+-		     const char *fmt, ...)
+-{
+-  struct grub_boot_time *n;
+-  va_list args;
+-
+-  grub_error_push ();
+-  n = grub_malloc (sizeof (*n));
+-  if (!n)
+-    {
+-      grub_errno = 0;
+-      grub_error_pop ();
+-      return;
+-    }
+-  n->file = file;
+-  n->line = line;
+-  n->tp = grub_get_time_ms ();
+-  n->next = 0;
+-
+-  va_start (args, fmt);
+-  n->msg = grub_xvasprintf (fmt, args);
+-  va_end (args);
+-
+-  *boot_time_last = n;
+-  boot_time_last = &n->next;
+-
+-  grub_errno = 0;
+-  grub_error_pop ();
+-}
+-#endif
++grub_divmod64 (grub_uint64_t n, grub_uint64_t d, grub_uint64_t *remainder)
++{
++  if (remainder != NULL)
++    *remainder = n % d;
++  return n / d;
++}
+--- a/grub/include/grub/err.h
++++ b/grub/include/grub/err.h
+@@ -80,28 +80,7 @@
+   }
+ grub_err_t;
+ 
+-struct grub_error_saved
+-{
+-  grub_err_t grub_errno;
+-  char errmsg[GRUB_MAX_ERRMSG];
+-};
+-
+ extern grub_err_t EXPORT_VAR(grub_errno);
+-extern char EXPORT_VAR(grub_errmsg)[GRUB_MAX_ERRMSG];
+-
+-grub_err_t EXPORT_FUNC(grub_error) (grub_err_t n, const char *file, const char *function, const int line, const char *fmt, ...)
+-	__attribute__ ((format (GNU_PRINTF, 5, 6)));
+-grub_err_t EXPORT_FUNC(grub_user_error) (grub_err_t n, const char *fmt, ...)
+-	__attribute__ ((format (GNU_PRINTF, 2, 3)));
+-
+-#define grub_error(n, fmt, ...) grub_error (n, __FILE__, __FUNCTION__, __LINE__, fmt, ##__VA_ARGS__)
+-
+-void EXPORT_FUNC(grub_fatal) (const char *fmt, ...) __attribute__ ((noreturn));
+-void EXPORT_FUNC(grub_error_push) (void);
+-int EXPORT_FUNC(grub_error_pop) (void);
+-void EXPORT_FUNC(grub_print_error) (void);
+-extern int EXPORT_VAR(grub_err_printed_errors);
+-int grub_err_printf (const char *fmt, ...)
+-     __attribute__ ((format (GNU_PRINTF, 1, 2)));
++grub_err_t EXPORT_FUNC(grub_error) (grub_err_t code);
+ 
+ #endif /* ! GRUB_ERR_HEADER */
+--- a/grub/include/grub/file.h
++++ b/grub/include/grub/file.h
+@@ -181,7 +181,6 @@
+ };
+ typedef struct grub_file *grub_file_t;
+ 
+-extern grub_disk_read_hook_t EXPORT_VAR(grub_file_progress_hook);
+ 
+ /* Filters with lower ID are executed first.  */
+ typedef enum grub_file_filter_id
+--- a/grub/include/grub/list.h
++++ b/grub/include/grub/list.h
+@@ -47,8 +47,7 @@
+ static inline void *
+ grub_bad_type_cast_real (int line, const char *file)
+ {
+-  grub_fatal ("error:%s:%u: bad type cast between incompatible grub types",
+-	      file, line);
++  __builtin_trap ();
+ }
+ 
+ #define grub_bad_type_cast() grub_bad_type_cast_real(__LINE__, GRUB_FILE)
+--- a/grub/include/grub/misc.h
++++ b/grub/include/grub/misc.h
+@@ -37,7 +37,6 @@
+ #endif
+ #define COMPILE_TIME_ASSERT(cond) switch (0) { case 1: case !(cond): ; }
+ 
+-#define grub_dprintf(condition, ...) grub_real_dprintf(GRUB_FILE, __FUNCTION__, __LINE__, condition, __VA_ARGS__)
+ 
+ void *EXPORT_FUNC(grub_memmove) (void *dest, const void *src, grub_size_t n);
+ char *EXPORT_FUNC(grub_strcpy) (char *dest, const char *src);
+@@ -361,7 +360,7 @@
+     {
+       if (magnitude > (unsigned long) GRUB_LONG_MAX + 1)
+         {
+-          grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
++          grub_error (GRUB_ERR_OUT_OF_RANGE);
+           return GRUB_LONG_MIN;
+         }
+       return -((long) magnitude);
+@@ -370,7 +369,7 @@
+     {
+       if (magnitude > GRUB_LONG_MAX)
+         {
+-          grub_error (GRUB_ERR_OUT_OF_RANGE, N_("overflow is detected"));
++          grub_error (GRUB_ERR_OUT_OF_RANGE);
+           return GRUB_LONG_MAX;
+         }
+       return (long) magnitude;
+@@ -402,38 +401,6 @@
+   return output;
+ }
+ 
+-extern void (*EXPORT_VAR (grub_xputs)) (const char *str);
+-
+-static inline int
+-grub_puts (const char *s)
+-{
+-  const char nl[2] = "\n";
+-  grub_xputs (s);
+-  grub_xputs (nl);
+-
+-  return 1;	/* Cannot fail.  */
+-}
+-
+-int EXPORT_FUNC(grub_puts_) (const char *s);
+-int EXPORT_FUNC(grub_debug_enabled) (const char *condition);
+-void EXPORT_FUNC(grub_real_dprintf) (const char *file,
+-				     const char *function,
+-                                     const int line,
+-                                     const char *condition,
+-                                     const char *fmt, ...) __attribute__ ((format (GNU_PRINTF, 5, 6)));
+-int EXPORT_FUNC(grub_printf) (const char *fmt, ...) __attribute__ ((format (GNU_PRINTF, 1, 2)));
+-int EXPORT_FUNC(grub_printf_) (const char *fmt, ...) __attribute__ ((format (GNU_PRINTF, 1, 2)));
+-int EXPORT_FUNC(grub_vprintf) (const char *fmt, va_list args);
+-int EXPORT_FUNC(grub_snprintf) (char *str, grub_size_t n, const char *fmt, ...)
+-     __attribute__ ((format (GNU_PRINTF, 3, 4)));
+-int EXPORT_FUNC(grub_vsnprintf) (char *str, grub_size_t n, const char *fmt,
+-				 va_list args);
+-char *EXPORT_FUNC(grub_xasprintf) (const char *fmt, ...)
+-     __attribute__ ((format (GNU_PRINTF, 1, 2))) WARN_UNUSED_RESULT;
+-char *EXPORT_FUNC(grub_xvasprintf) (const char *fmt, va_list args) WARN_UNUSED_RESULT;
+-
+-void EXPORT_FUNC(grub_exit) (void) __attribute__ ((noreturn));
+-void EXPORT_FUNC(grub_abort) (void) __attribute__ ((noreturn));
+ grub_uint64_t EXPORT_FUNC(grub_divmod64) (grub_uint64_t n,
+ 					  grub_uint64_t d,
+ 					  grub_uint64_t *r);
+@@ -524,56 +491,9 @@
+ #define grub_no_modules 0
+ #endif
+ 
+-static inline void
+-grub_error_save (struct grub_error_saved *save)
+-{
+-  grub_memcpy (save->errmsg, grub_errmsg, sizeof (save->errmsg));
+-  save->grub_errno = grub_errno;
+-  grub_errno = GRUB_ERR_NONE;
+-}
+-
+-static inline void
+-grub_error_load (const struct grub_error_saved *save)
+-{
+-  grub_memcpy (grub_errmsg, save->errmsg, sizeof (grub_errmsg));
+-  grub_errno = save->grub_errno;
+-}
+-
+-/*
+- * grub_printf_fmt_checks() a fmt string for printf() against an expected
+- * format. It is intended for cases where the fmt string could come from
+- * an outside source and cannot be trusted.
+- *
+- * While expected fmt accepts a printf() format string it should be kept
+- * as simple as possible. The printf() format strings with positional
+- * parameters are NOT accepted, neither for fmt nor for fmt_expected.
+- *
+- * The fmt is accepted if it has equal or less arguments than fmt_expected
+- * and if the type of all arguments match.
+- *
+- * Returns GRUB_ERR_NONE if fmt is acceptable.
+- */
+-grub_err_t EXPORT_FUNC (grub_printf_fmt_check) (const char *fmt, const char *fmt_expected);
+-
+-#if BOOT_TIME_STATS
+-struct grub_boot_time
+-{
+-  struct grub_boot_time *next;
+-  grub_uint64_t tp;
+-  const char *file;
+-  int line;
+-  char *msg;
+-};
+-
+-extern struct grub_boot_time *EXPORT_VAR(grub_boot_time_head);
+-
+-void EXPORT_FUNC(grub_real_boot_time) (const char *file,
+-				       const int line,
+-				       const char *fmt, ...) __attribute__ ((format (GNU_PRINTF, 3, 4)));
+-#define grub_boot_time(...) grub_real_boot_time(GRUB_FILE, __LINE__, __VA_ARGS__)
+-#else
+-#define grub_boot_time(...)
+-#endif
++
++
++
+ 
+ #define grub_max(a, b) (((a) > (b)) ? (a) : (b))
+ #define grub_min(a, b) (((a) < (b)) ? (a) : (b))
+--- a/grub/include/grub/ntfs.h
++++ b/grub/include/grub/ntfs.h
+@@ -210,7 +210,7 @@
+   grub_uint8_t *cur_run;
+   struct grub_ntfs_attr *attr;
+   struct grub_ntfs_comp comp;
+-  void *file;
++
+ };
+ 
+ typedef grub_err_t (*grub_ntfscomp_func_t) (grub_uint8_t *dest,
+--- a/src/diskcache.c
++++ b/src/diskcache.c
+@@ -39,14 +39,11 @@
+  */
+ 
+ /* The host unit test stands in for these; see tests/diskcache_host.c. */
+-#ifndef DISKCACHE_HOST_TEST
+ #include <grub/err.h>
+ #include <grub/misc.h>
+ #include <grub/disk.h>
+ #include "driver.h"
+-#endif
+ #include "diskcache.h"
+-
+ #ifndef DISKCACHE_BLOCK_SIZE
+ #define DISKCACHE_BLOCK_SIZE    (8 * GRUB_DISK_SECTOR_SIZE)
+ #endif
+@@ -56,7 +53,6 @@
+ #ifndef DISKCACHE_BULK_BYPASS
+ #define DISKCACHE_BULK_BYPASS   (128 * 1024)
+ #endif
+-
+ typedef struct {
+ 	UINT8  *Data;
+ 	UINT64  Block;
+@@ -65,83 +61,38 @@
+ 	UINT32  BlockSize;
+ 	UINT8   Valid;
+ } DISKCACHE_SLOT;
++static DISKCACHE_SLOT CacheSlots[DISKCACHE_SLOTS];
+ 
+-static grub_uint64_t CacheHits, CacheMisses, CacheReads, CacheBypassed;
+-#ifndef DISKCACHE_DISABLE
+-static DISKCACHE_SLOT CacheSlots[DISKCACHE_SLOTS];
+-#endif
+-
+-/* Multiply-shift: Block indices arrive in clusters, and a plain mask would
+- * collide two clusters DISKCACHE_SLOTS apart. */
+-#ifndef DISKCACHE_DISABLE
+ static UINTN CacheIndex(UINT64 Block)
+ {
+ 	UINT64 h = Block * 0x9E3779B97F4A7C15ULL;
+ 	return (UINTN)((h >> 47) & (DISKCACHE_SLOTS - 1));
+ }
+-#endif
+-
+-/* Media info comes from BlockIo, reads from DiskIo - as before. */
++ 
+ static EFI_BLOCK_IO_MEDIA *CacheMedia(EFI_FS *Fs)
+ {
+ 	return (Fs->BlockIo2 != NULL) ? Fs->BlockIo2->Media : Fs->BlockIo->Media;
+ }
+-
+-#ifndef DISKCACHE_DISABLE
+ static UINT64 CacheMediaBytes(EFI_FS *Fs)
+ {
+ 	EFI_BLOCK_IO_MEDIA *Media = CacheMedia(Fs);
+ 	if (Media == NULL || Media->BlockSize == 0)
+ 		return 0;
+-	/* LastBlock counts BlockSize units, not 512-byte sectors. */
+ 	return ((UINT64)Media->LastBlock + 1) * Media->BlockSize;
+ }
+-#endif
+-
+ VOID DiskCacheFlush()
+ {
+-#ifndef DISKCACHE_DISABLE
+ 	for (UINTN i = 0; i < DISKCACHE_SLOTS; i++) {
+ 		if (CacheSlots[i].Data != NULL)
+ 			FreePool(CacheSlots[i].Data);
+ 		ZeroMem(&CacheSlots[i], sizeof(CacheSlots[i]));
+ 	}
+-#endif
+-	CacheHits = CacheMisses = CacheReads = CacheBypassed = 0;
+ }
+ 
+-VOID DiskCacheGetStats(grub_uint64_t *Hits, grub_uint64_t *Misses,
+-                       grub_uint64_t *Reads, grub_uint64_t *Bypassed)
+-{
+-	if (Hits != NULL)
+-		*Hits = CacheHits;
+-	if (Misses != NULL)
+-		*Misses = CacheMisses;
+-	if (Reads != NULL)
+-		*Reads = CacheReads;
+-	if (Bypassed != NULL)
+-		*Bypassed = CacheBypassed;
+-}
+ 
+-/* Report what the cache did in terms of reads, hits and misses.
+- * Requires FS_LOGGING set to DEBUG or higher. */
+-VOID DiskCachePrintStats()
+-{
+-#ifdef DISKCACHE_DISABLE
+-	return;
+-#else
+-	if (CacheReads == 0 && CacheHits == 0 && CacheBypassed == 0)
+-		return;
+-	PrintDebug(L"DiskCache: reads %llu, hits %llu, misses %llu, uncached %llu\n",
+-		CacheReads, CacheHits, CacheMisses, CacheBypassed);
+-#endif
+-}
+-
+-/* One ReadDisk/ReadDiskEx. Offset and Size are absolute bytes. */
+ static EFI_STATUS DiskRawRead(EFI_FS *Fs, UINT64 ByteOffset, UINTN Size, VOID *Buf)
+ {
+ 	UINT32 MediaId = CacheMedia(Fs)->MediaId;
+-
+ 	if (Fs->DiskIo2 != NULL) {
+ 		return Fs->DiskIo2->ReadDiskEx(Fs->DiskIo2, MediaId,
+ 			ByteOffset, &(Fs->DiskIo2Token), Size, Buf);
+@@ -149,9 +100,7 @@
+ 	return Fs->DiskIo->ReadDisk(Fs->DiskIo, MediaId,
+ 		ByteOffset, (UINTN)Size, Buf);
+ }
+-
+-/* Serve [InBlk, InBlk + Len] of one block, caching the whole block when we can. */
+-#ifndef DISKCACHE_DISABLE
++ 
+ static EFI_STATUS DiskCacheBlock(EFI_FS *Fs, UINT64 Block, UINTN InBlk, UINTN Len,
+                                  VOID *Dst, UINT64 MediaBytes)
+ {
+@@ -159,23 +108,16 @@
+ 	DISKCACHE_SLOT *Slot = &CacheSlots[CacheIndex(Block)];
+ 	EFI_BLOCK_IO_MEDIA *Media = CacheMedia(Fs);
+ 	UINT64 BlockBase = Block * DISKCACHE_BLOCK_SIZE;
+-
+ 	if (Slot->Valid && Slot->Block == Block && Slot->MediaId == Media->MediaId &&
+ 		Slot->BlockSize == Media->BlockSize && Slot->MediaBytes == MediaBytes) {
+ 		CopyMem(Dst, Slot->Data + InBlk, Len);
+-		CacheHits++;
+ 		return EFI_SUCCESS;
+ 	}
+-
+-	/* A block hanging off the end of the medium, or a medium of unknown size,
+-	 * is served straight through: never widen a read. */
++	
+ 	if (MediaBytes == 0 || BlockBase + DISKCACHE_BLOCK_SIZE > MediaBytes) {
+-		CacheBypassed++;
+-		CacheReads++;
+ 		return DiskRawRead(Fs, BlockBase + InBlk, Len, Dst);
+ 	}
+-
+-	/* Free whatever this slot held before reusing the buffer. */
++	 
+ 	if (Slot->Data != NULL && (!Slot->Valid || Slot->Block != Block ||
+ 		Slot->MediaId != Media->MediaId || Slot->BlockSize != Media->BlockSize ||
+ 		Slot->MediaBytes != MediaBytes)) {
+@@ -186,65 +128,40 @@
+ 		Slot->Data = AllocateZeroPool(DISKCACHE_BLOCK_SIZE);
+ 		Slot->Valid = 0;
+ 		if (Slot->Data == NULL) {
+-			/* Out of memory: pass through rather than fail. */
+-			CacheBypassed++;
+-			CacheReads++;
++
+ 			return DiskRawRead(Fs, BlockBase + InBlk, Len, Dst);
+ 		}
+ 	}
+-
+-	CacheMisses++;
+-	CacheReads++;
+ 	Status = DiskRawRead(Fs, BlockBase, DISKCACHE_BLOCK_SIZE, Slot->Data);
+ 	if (EFI_ERROR(Status)) {
+-		/* Never publish a half-read block. */
+ 		FreePool(Slot->Data);
+ 		Slot->Data = NULL;
+ 		Slot->Valid = 0;
+ 		return Status;
+ 	}
+-
+-	/* Publish only once the buffer is complete. */
++	 
+ 	Slot->Block = Block;
+ 	Slot->MediaId = Media->MediaId;
+ 	Slot->BlockSize = Media->BlockSize;
+ 	Slot->MediaBytes = MediaBytes;
+ 	Slot->Valid = 1;
+-
+ 	CopyMem(Dst, Slot->Data + InBlk, Len);
+ 	return EFI_SUCCESS;
+ }
+-#endif
+ 
+-/* Cached replacement for the body of grub_disk_read().
+- * DISKCACHE_DISABLE builds a counting pass-through instead, so both variants
+- * can report firmware reads for the same workload. */
+ EFI_STATUS DiskCacheRead(EFI_FS *Fs, UINT64 ByteOffset, UINTN Size, VOID *Buf)
+ {
+ 	if (Size == 0)
+ 		return EFI_SUCCESS;
+-
+-#ifdef DISKCACHE_DISABLE
+-	CacheReads++;
+-	return DiskRawRead(Fs, ByteOffset, Size, Buf);
+-#else
+ 	UINT8 *Out = (UINT8 *) Buf;
+ 	UINT64 MediaBytes = CacheMediaBytes(Fs);
++	if (MediaBytes != 0 && ByteOffset + Size > MediaBytes) {
+ 
+-	if (MediaBytes != 0 && ByteOffset + Size > MediaBytes) {
+-		/* Past the end of the medium: let the firmware produce the error so
+-		 * the behaviour matches the uncached path exactly. */
+-		CacheBypassed++;
+-		CacheReads++;
+ 		return DiskRawRead(Fs, ByteOffset, Size, Buf);
+ 	}
+-
+ 	if (Size >= DISKCACHE_BULK_BYPASS) {
+-		CacheBypassed++;
+-		CacheReads++;
+ 		return DiskRawRead(Fs, ByteOffset, Size, Buf);
+ 	}
+-
+ 	UINT64 Block = ByteOffset / DISKCACHE_BLOCK_SIZE;
+ 	UINT64 End = ByteOffset + Size;
+ 	while (ByteOffset < End) {
+@@ -260,7 +177,5 @@
+ 		ByteOffset += Len;
+ 		Block++;
+ 	}
+-
+ 	return EFI_SUCCESS;
+-#endif /* DISKCACHE_DISABLE */
+ }
+--- a/src/diskcache.h
++++ b/src/diskcache.h
+@@ -5,25 +5,11 @@
+  *  SPDX-License-Identifier: GPL-2.0-or-later
+  */
+ 
+-#ifndef DISKCACHE_HOST_TEST
+ #include <grub/types.h>
+-#endif
+-
+ #pragma once
+-
+ struct _EFI_FS;
+ 
+-/* Serve Size bytes at absolute ByteOffset on the medium, identically to
+- * reading through to the firmware, only with fewer calls. */
+ EFI_STATUS DiskCacheRead(struct _EFI_FS *Fs, UINT64 ByteOffset, UINTN Size, VOID *Buf);
+ 
+-/* Drop every cached block; called on mount and unmount, since firmware can
+- * reuse a MediaId for a different medium. */
+ VOID DiskCacheFlush(VOID);
+ 
+-/* Print the counters on one line. */
+-VOID DiskCachePrintStats(VOID);
+-
+-/* Counters, for measuring what the cache is actually doing. */
+-VOID DiskCacheGetStats(grub_uint64_t *Hits, grub_uint64_t *Misses,
+-                       grub_uint64_t *Reads, grub_uint64_t *Bypassed);
+--- a/src/driver.c
++++ b/src/driver.c
+@@ -24,24 +24,17 @@
+  */
+ 
+ #include "driver.h"
+-
+-/* We'll try to instantiate a custom protocol as a mutex, so we need a GUID */
++ 
+ EFI_GUID *MutexGUID = NULL;
+-
+-/* Keep a global copy of our ImageHanle */
+-EFI_HANDLE EfiImageHandle = NULL;
+-
+-/* Handle for our custom protocol/mutex instance */
++ 
++ 
+ static EFI_HANDLE MutexHandle = NULL;
+-
+-/* Custom protocol/mutex definition */
++ 
+ typedef struct {
+ 	INTN Unused;
+ } EFI_MUTEX_PROTOCOL;
+ static EFI_MUTEX_PROTOCOL MutexProtocol = { 0 };
+-
+-
+-/* Return the driver name */
++ 
+ static EFI_STATUS EFIAPI
+ FSGetDriverName(EFI_COMPONENT_NAME_PROTOCOL *This,
+ 		CHAR8 *Language, CHAR16 **DriverName)
+@@ -49,7 +42,6 @@
+ 	*DriverName = FullDriverName;
+ 	return EFI_SUCCESS;
+ }
+-
+ static EFI_STATUS EFIAPI
+ FSGetDriverName2(EFI_COMPONENT_NAME2_PROTOCOL *This,
+ 		CHAR8 *Language, CHAR16 **DriverName)
+@@ -57,8 +49,7 @@
+ 	*DriverName = FullDriverName;
+ 	return EFI_SUCCESS;
+ }
+-
+-/* Return the controller name (unsupported for a filesystem) */
++ 
+ static EFI_STATUS EFIAPI
+ FSGetControllerName(EFI_COMPONENT_NAME_PROTOCOL *This,
+ 		EFI_HANDLE ControllerHandle, EFI_HANDLE ChildHandle,
+@@ -66,7 +57,6 @@
+ {
+ 	return EFI_UNSUPPORTED;
+ }
+-
+ static EFI_STATUS EFIAPI
+ FSGetControllerName2(EFI_COMPONENT_NAME2_PROTOCOL *This,
+ 		EFI_HANDLE ControllerHandle, EFI_HANDLE ChildHandle,
+@@ -74,7 +64,6 @@
+ {
+ 	return EFI_UNSUPPORTED;
+ }
+-
+ static VOID
+ FreeFsInstance(EFI_FS *Instance) {
+ 	if (Instance == NULL)
+@@ -84,11 +73,6 @@
+ 	FreePool(Instance);
+ }
+ 
+-/*
+- * To check if our driver has a chance to apply to the controllers sent during
+- * the supported detection phase, try to open the child protocols it is meant
+- * to consume (here EFI_DISK_IO) in exclusive access.
+- */
+ static EFI_STATUS EFIAPI
+ FSBindingSupported(EFI_DRIVER_BINDING_PROTOCOL *This,
+ 		EFI_HANDLE ControllerHandle,
+@@ -97,8 +81,7 @@
+ 	EFI_STATUS Status;
+ 	EFI_DISK_IO_PROTOCOL  *DiskIo;
+ 	EFI_DISK_IO2_PROTOCOL *DiskIo2;
+-
+-	/* Don't handle this unless we can get exclusive access to DiskIO through it */
++	 
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiDiskIo2ProtocolGuid, (VOID **) &DiskIo2,
+ 			This->DriverBindingHandle, ControllerHandle,
+@@ -111,22 +94,13 @@
+ 			EFI_OPEN_PROTOCOL_BY_DRIVER);
+ 	if (EFI_ERROR(Status))
+ 		return Status;
+-
+-	PrintDebug(L"FSBindingSupported\n");
+-
+-	/*
+-	 * The whole concept of BindingSupported is to hint at what we may
+-	 * actually support, but not check if the target is valid or
+-	 * initialize anything, so we must close all protocols we opened.
+-	 */
++	
+ 	BS->CloseProtocol(ControllerHandle, &gEfiDiskIo2ProtocolGuid,
+ 		This->DriverBindingHandle, ControllerHandle);
+ 	BS->CloseProtocol(ControllerHandle, &gEfiDiskIoProtocolGuid,
+ 			This->DriverBindingHandle, ControllerHandle);
+-
+-	return EFI_SUCCESS;
+-}
+-
++	return EFI_SUCCESS;
++}
+ static EFI_STATUS EFIAPI
+ FSBindingStart(EFI_DRIVER_BINDING_PROTOCOL *This,
+ 		EFI_HANDLE ControllerHandle,
+@@ -134,89 +108,65 @@
+ {
+ 	EFI_STATUS Status;
+ 	EFI_FS *Instance;
+-	PrintDebug(L"FSBindingStart\n");
+-
+-	/* Allocate a new instance of a filesystem */
++	 
+ 	Instance = AllocateZeroPool(sizeof(EFI_FS));
+ 	if (Instance == NULL) {
+ 		Status = EFI_OUT_OF_RESOURCES;
+-		PrintStatusError(Status, L"Could not allocate a new file system instance");
+-		return Status;
+-	}
+-	/* Allocate the root file structure */
++		return Status;
++	}
+ 	Instance->RootFile = AllocateZeroPool(sizeof(EFI_GRUB_FILE));
+ 	if (Instance->RootFile == NULL) {
+ 		Status = EFI_OUT_OF_RESOURCES;
+-		PrintStatusError(Status, L"Could not allocate root file");
+ 		goto error;
+ 	}
+ 	Instance->FileIoInterface.Revision = EFI_SIMPLE_FILE_SYSTEM_PROTOCOL_REVISION;
+ 	Instance->FileIoInterface.OpenVolume = FileOpenVolume;
+-
+-	/* Fill the device path for our instance */
++	 
+ 	Instance->DevicePath = DevicePathFromHandle(ControllerHandle);
+ 	if (Instance->DevicePath == NULL) {
+ 		Status = EFI_NO_MAPPING;
+-		PrintStatusError(Status, L"Could not get Device Path");
+-		goto error;
+-	}
+-
+-	/* Get access to the Block IO protocol for this controller */
++		goto error;
++	}
++	 
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiBlockIo2ProtocolGuid, (VOID **) &Instance->BlockIo2,
+ 			This->DriverBindingHandle, ControllerHandle,
+ 			EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+ 	if (EFI_ERROR(Status))
+ 		Instance->BlockIo2 = NULL;
+-
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiBlockIoProtocolGuid, (VOID **) &Instance->BlockIo,
+ 			This->DriverBindingHandle, ControllerHandle,
+-			/*
+-			 * EFI_OPEN_PROTOCOL_BY_DRIVER would return Access Denied here,
+-			 * because the disk driver has that protocol already open. So use
+-			 * EFI_OPEN_PROTOCOL_GET_PROTOCOL (which doesn't require us to close it).
+-			 */
++
+ 			EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not access BlockIO protocol");
+-		goto error;
+-	}
+-
+-	/* Get exclusive access to the Disk IO protocol */
++		goto error;
++	}
++	 
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiDiskIo2ProtocolGuid, (VOID**) &Instance->DiskIo2,
+ 			This->DriverBindingHandle, ControllerHandle,
+ 			EFI_OPEN_PROTOCOL_BY_DRIVER);
+ 	if (EFI_ERROR(Status))
+ 		Instance->DiskIo2 = NULL;
+-
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiDiskIoProtocolGuid, (VOID**) &Instance->DiskIo,
+ 			This->DriverBindingHandle, ControllerHandle,
+ 			EFI_OPEN_PROTOCOL_BY_DRIVER);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not access the DiskIo protocol");
+-		goto error;
+-	}
+-
+-	/* Go through GRUB target init */
++		goto error;
++	}
++	 
+ 	Status = GrubDeviceInit(Instance);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not init grub device");
+-		goto error;
+-	}
+-
++		goto error;
++	}
+ 	Status = FSInstall(Instance, ControllerHandle);
+ 	if (EFI_ERROR(Status))
+ 		GrubDeviceExit(Instance);
+-
+ error:
+ 	if (EFI_ERROR(Status)) {
+-		/*
+-		 * Unless we close the DiskIO protocols, which we do on error,
+-		 * no other FS driver would be able to access this partition.
+-		 */
++
+ 		if (Instance->DiskIo2 != NULL)
+ 			BS->CloseProtocol(ControllerHandle, &gEfiDiskIo2ProtocolGuid,
+ 				This->DriverBindingHandle, ControllerHandle);
+@@ -227,7 +177,6 @@
+ 	}
+ 	return Status;
+ }
+-
+ static EFI_STATUS EFIAPI
+ FSBindingStop(EFI_DRIVER_BINDING_PROTOCOL *This,
+ 		EFI_HANDLE ControllerHandle, UINTN NumberOfChildren,
+@@ -236,80 +185,45 @@
+ 	EFI_STATUS Status;
+ 	EFI_FS *Instance;
+ 	EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *FileIoInterface;
+-
+-	PrintDebug(L"FSBindingStop\n");
+-
+-	/* Get a pointer back to our FS instance through its installed protocol */
++	 
+ 	Status = BS->OpenProtocol(ControllerHandle,
+ 			&gEfiSimpleFileSystemProtocolGuid, (VOID **) &FileIoInterface,
+ 			This->DriverBindingHandle, ControllerHandle,
+ 			EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not locate our instance");
+-		return Status;
+-	}
+-
++		return Status;
++	}
+ 	Instance = _CR(FileIoInterface, EFI_FS, FileIoInterface);
+ 	FSUninstall(Instance, ControllerHandle);
+-
+ 	Status = GrubDeviceExit(Instance);
+-	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not destroy grub device");
+-	}
+-
+ 	BS->CloseProtocol(ControllerHandle, &gEfiDiskIo2ProtocolGuid,
+ 			This->DriverBindingHandle, ControllerHandle);
+ 	BS->CloseProtocol(ControllerHandle, &gEfiDiskIoProtocolGuid,
+ 			This->DriverBindingHandle, ControllerHandle);
+-
+ 	FreeFsInstance(Instance);
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/*
+- * The platform determines whether it will support the older Component
+- * Name Protocol or the current Component Name2 Protocol, or both.
+- * Because of this, it is strongly recommended that you implement both
+- * protocols in your driver.
+- *
+- * NB: From what I could see, the only difference between Name and Name2
+- * is that Name uses ISO-639-2 ("eng") whereas Name2 uses RFC 4646 ("en")
+- * See: http://www.loc.gov/standards/iso639-2/faq.html#6
+- */
++	return EFI_SUCCESS;
++}
++
+ static EFI_COMPONENT_NAME_PROTOCOL FSComponentName = {
+ 	.GetDriverName = FSGetDriverName,
+ 	.GetControllerName = FSGetControllerName,
+ 	.SupportedLanguages = (CHAR8 *) "eng"
+ };
+-
+ static EFI_COMPONENT_NAME2_PROTOCOL FSComponentName2 = {
+ 	.GetDriverName = FSGetDriverName2,
+ 	.GetControllerName = FSGetControllerName2,
+ 	.SupportedLanguages = (CHAR8 *) "en"
+ };
+-
+ static EFI_DRIVER_BINDING_PROTOCOL FSDriverBinding = {
+ 	.Supported = FSBindingSupported,
+ 	.Start = FSBindingStart,
+ 	.Stop = FSBindingStop,
+-	/* This field is used by the EFI boot service ConnectController() to determine the order
+-	 * that driver's Supported() service will be used when a controller needs to be started.
+-	 * EFI Driver Binding Protocol instances with higher Version values will be used before
+-	 * ones with lower Version values. The Version values of 0x0-0x0f and
+-	 * 0xfffffff0-0xffffffff are reserved for platform/OEM specific drivers. The Version
+-	 * values of 0x10-0xffffffef are reserved for IHV-developed drivers.
+-	 */
++
+ 	.Version = 0x10,
+ 	.ImageHandle = NULL,
+ 	.DriverBindingHandle = NULL
+ };
+ 
+-/**
+- * Set a filesystem GUID according to the filesystem name
+- * We use a static ID for the first 8 bytes, and then roll the lowercase name
+- * for the last 8 bytes (eg. exfat => {'e', 'x', 'f', 'a', 't', 'e', 'x', 'f'})
+- */
+ EFI_GUID *
+ GetFSGuid(VOID)
+ {
+@@ -317,13 +231,11 @@
+ 	static EFI_GUID Guid = { 0xEF1F5EF1, 0xF17E, 0x5857, { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 } };
+ 	CHAR16 c;
+ 	const CHAR16 *PlusName = L"plus";
+-	UINT8 Data4[12];	/* +4 so that we can also reduce something like "1234567plus" into "1234567+" */
+-
++	UINT8 Data4[12];	 
+ 	for (i = 0, j = 0, k = 0; j < ARRAYSIZE(Data4); i = (i+1)%Len, j++) {
+ 		c = ShortDriverName[i];
+ 		if ((c >= L'A') && (c <= L'Z'))
+ 			c += L'a' - L'A';
+-		/* Convert any 'plus' that is part of the name to '+' */
+ 		if (c == PlusName[k]) {
+ 			if (++k == 4) {
+ 				k = 0;
+@@ -338,16 +250,9 @@
+ 		}
+ 	}
+ 	CopyMem(Guid.Data4, Data4, 8);
+-
+ 	return &Guid;
+ }
+ 
+-/**
+- * Uninstall EFI driver
+- *
+- * @v ImageHandle       Handle identifying the loaded image
+- * @ret Status          EFI status code to return on exit
+- */
+ EFI_STATUS EFIAPI
+ FSDriverUninstall(EFI_HANDLE ImageHandle)
+ {
+@@ -355,52 +260,33 @@
+ 	UINTN NumHandles;
+ 	EFI_HANDLE *Handles = NULL;
+ 	UINTN i;
+-
+-	/* Enumerate all handles */
++	 
+ 	Status = BS->LocateHandleBuffer(AllHandles, NULL, NULL, &NumHandles, &Handles);
+-
+-	/* Disconnect controllers linked to our driver. This action will trigger a call to BindingStop */
++	 
+ 	if (Status == EFI_SUCCESS) {
+ 		for (i=0; i<NumHandles; i++) {
+-			/* Make sure to filter on DriverBindingHandle,  else EVERYTHING gets disconnected! */
+ 			Status = BS->DisconnectController(Handles[i], FSDriverBinding.DriverBindingHandle, NULL);
+-			if (Status == EFI_SUCCESS)
+-				PrintDebug(L"DisconnectController[%d]\n", i);
+ 		}
+ 	} else {
+-		PrintStatusError(Status, L"Unable to enumerate handles");
+ 	}
+ 	if (Handles != NULL)
+ 		BS->FreePool(Handles);
+-
+-	/* Now that all controllers are disconnected, we can safely remove our protocols */
++	 
+ 	BS->UninstallMultipleProtocolInterfaces(ImageHandle,
+ 			&gEfiDriverBindingProtocolGuid, &FSDriverBinding,
+ 			&gEfiComponentNameProtocolGuid, &FSComponentName,
+ 			&gEfiComponentName2ProtocolGuid, &FSComponentName2,
+ 			NULL);
+-
+-	/* Release the relevant GRUB module(s) */
++	 
+ 	for (i = 0; GrubModuleExit[i] != NULL; i++)
+ 		GrubModuleExit[i]();
+-
+-	/* Uninstall our mutex (we're the only instance that can run this code) */
++	 
+ 	BS->UninstallMultipleProtocolInterfaces(MutexHandle,
+ 				MutexGUID, &MutexProtocol,
+ 				NULL);
+-
+-	PrintDebug(L"FS driver uninstalled.\n");
+-	return EFI_SUCCESS;
+-}
+-
+-/**
+- * Install EFI driver - Will be the entrypoint for our driver executable
+- * http://wiki.phoenix.com/wiki/index.php/EFI_IMAGE_ENTRY_POINT
+- *
+- * @v ImageHandle       Handle identifying the loaded image
+- * @v SystemTable       Pointers to EFI system calls
+- * @ret Status          EFI status code to return on exit
+- */
++	return EFI_SUCCESS;
++}
++
+ EFI_STATUS EFIAPI
+ FSDriverInstall(EFI_HANDLE ImageHandle, EFI_SYSTEM_TABLE* SystemTable)
+ {
+@@ -408,69 +294,51 @@
+ 	EFI_LOADED_IMAGE_PROTOCOL *LoadedImage = NULL;
+ 	VOID *Interface;
+ 	UINTN i;
+-
+ #if defined(_GNU_EFI)
+-	InitializeLib(ImageHandle, SystemTable);
++	ST = SystemTable;
++	BS = SystemTable->BootServices;
++	RT = SystemTable->RuntimeServices;
++	PoolAllocationType = EfiBootServicesData;
+ #endif
+-	SetLogging();
+-	EfiImageHandle = ImageHandle;
+-
+-	/* Prevent the driver from being loaded twice by detecting and trying to
+-	 * instantiate a custom protocol, which we use as a global mutex.
+-	 */
++	
+ 	MutexGUID = GetFSGuid();
+-
+ 	Status = BS->LocateProtocol(MutexGUID, NULL, &Interface);
+ 	if (Status == EFI_SUCCESS) {
+-		PrintError(L"This driver has already been installed\n");
+ 		return EFI_LOAD_ERROR;
+ 	}
+-	/* The only valid status we expect is NOT FOUND here */
+ 	if (Status != EFI_NOT_FOUND) {
+-		PrintStatusError(Status, L"Could not locate global mutex");
+ 		return Status;
+ 	}
+ 	Status = BS->InstallMultipleProtocolInterfaces(&MutexHandle,
+ 			MutexGUID, &MutexProtocol,
+ 			NULL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not install global mutex");
+-		return Status;
+-	}
+-
+-	/* Grab a handle to this image, so that we can add an unload to our driver */
++		return Status;
++	}
++	 
+ 	Status = BS->OpenProtocol(ImageHandle, &gEfiLoadedImageProtocolGuid,
+ 			(VOID **) &LoadedImage, ImageHandle,
+ 			NULL, EFI_OPEN_PROTOCOL_GET_PROTOCOL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not open loaded image protocol");
+-		return Status;
+-	}
+-
+-	/* Configure driver binding protocol */
++		return Status;
++	}
++	 
+ 	FSDriverBinding.ImageHandle = ImageHandle;
+ 	FSDriverBinding.DriverBindingHandle = ImageHandle;
+-
+-	/* Install driver */
++	 
+ 	Status = BS->InstallMultipleProtocolInterfaces(&FSDriverBinding.DriverBindingHandle,
+ 			&gEfiDriverBindingProtocolGuid, &FSDriverBinding,
+ 			&gEfiComponentNameProtocolGuid, &FSComponentName,
+ 			&gEfiComponentName2ProtocolGuid, &FSComponentName2,
+ 			NULL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not bind driver");
+-		return Status;
+-	}
+-
+-	/* Register the uninstall callback */
++		return Status;
++	}
++	 
+ 	LoadedImage->Unload = FSDriverUninstall;
+-
+-	/* Initialize the relevant GRUB fs module(s) */
++	 
+ 	for (i = 0; GrubModuleInit[i] != NULL; i++)
+ 		GrubModuleInit[i]();
+-
+ 	InitializeListHead(&FsListHead);
+-
+-	PrintDebug(L"FS driver installed.\n");
+-	return EFI_SUCCESS;
+-}
++	return EFI_SUCCESS;
++}
+--- a/src/driver.h
++++ b/src/driver.h
+@@ -19,87 +19,10 @@
+  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#if defined(__MAKEWITH_GNUEFI)
++#pragma once
+ #include <efi.h>
+ #include <efilib.h>
+-#include <efidebug.h>	/* ASSERT */
+-#else
+-#include <Base.h>
+-#include <Uefi.h>
+-
+-#include <Library/DebugLib.h>
+-#include <Library/BaseLib.h>
+-#include <Library/BaseMemoryLib.h>
+-#include <Library/UefiRuntimeServicesTableLib.h>
+-#include <Library/UefiDriverEntryPoint.h>
+-#include <Library/UefiBootServicesTableLib.h>
+-#include <Library/MemoryAllocationLib.h>
+-#include <Library/DevicePathLib.h>
+-#include <Library/PrintLib.h>
+-#include <Library/UefiLib.h>
+-
+-#include <Protocol/UnicodeCollation.h>
+-#include <Protocol/LoadedImage.h>
+-#include <Protocol/DriverBinding.h>
+-#include <Protocol/DevicePathFromText.h>
+-#include <Protocol/DevicePathToText.h>
+-#include <Protocol/DebugPort.h>
+-#include <Protocol/DebugSupport.h>
+-#include <Protocol/SimpleFileSystem.h>
+-#include <Protocol/BlockIo.h>
+-#include <Protocol/BlockIo2.h>
+-#include <Protocol/DiskIo.h>
+-#include <Protocol/DiskIo2.h>
+-#include <Protocol/ComponentName.h>
+-#include <Protocol/ComponentName2.h>
+-
+-#include <Guid/FileSystemInfo.h>
+-#include <Guid/FileInfo.h>
+-#include <Guid/FileSystemVolumeLabelInfo.h>
+-#include <Guid/ShellVariableGuid.h>
+-#endif
+-
+-#pragma once
+-
+-#if !defined(_MSC_VER)
+-#if !defined(__GNUC__) || (__GNUC__ < 4) || (__GNUC__ == 4 && __GNUC_MINOR__ < 7)
+-#error gcc 4.7 or later is required for the compilation of this driver.
+-#endif
+-
+-/* Having GNU_EFI_USE_MS_ABI should avoid the need for that ugly uefi_call_wrapper */
+-#if defined(_GNU_EFI) && !defined(GNU_EFI_USE_MS_ABI)
+-#error gnu-efi, with option GNU_EFI_USE_MS_ABI, is required for the compilation of this driver.
+-#endif
+-#endif
+-
+-/* Sort out the platform specifics */
+-#if defined(_M_ARM64) || defined(__aarch64__) || defined (_M_X64) || defined(__x86_64__) || defined(_M_RISCV64) || (defined (__riscv) && (__riscv_xlen == 64)) || defined (_M_LOONGARCH64) || defined (__loongarch64)
+-#define PERCENT_P L"%llx"
+-#else
+-#define PERCENT_P L"%x"
+-#endif
+-
+-/* Sort out the differences between EDK2 and gnu-efi */
+-#if defined(_GNU_EFI)
+-#define STUPID_CLANG_REF(a,b) a.b
+-#define FORWARD_LINK_REF(list) STUPID_CLANG_REF(list,Flink)
+-#else
+-#define STUPID_CLANG_REF(a,b) a.b
+-#define FORWARD_LINK_REF(list) STUPID_CLANG_REF(list, ForwardLink)
+-#define Atoi (INTN)StrDecimalToUintn
+-#define APrint AsciiPrint
+-#define strlena AsciiStrLen
+-#define strcmpa AsciiStrCmp
+-#define BS gBS
+-#define RT gRT
+-#define ST gST
+-#define _CR BASE_CR
+-#define PROTO_NAME(x) gEfi ## x ## Guid
+-#define GUID_NAME(x) gEfi ## x ## Guid
+-#define SIZE_OF_EFI_FILE_SYSTEM_VOLUME_LABEL_INFO SIZE_OF_EFI_FILE_SYSTEM_VOLUME_LABEL
+-#define EFI_FILE_SYSTEM_VOLUME_LABEL_INFO EFI_FILE_SYSTEM_VOLUME_LABEL
+-#define EFI_SIGNATURE_32(a,b,c,d) SIGNATURE_32(a,b,c,d)
+-#endif
++#define FORWARD_LINK_REF(list) (list).Flink
+ 
+ /* Driver version */
+ #define FS_DRIVER_VERSION_MAJOR 1
+@@ -123,36 +46,6 @@
+ #define MINIMUM_INFO_LENGTH     (SIZE_OF_EFI_FILE_INFO + MAX_FILE_NAME_LEN * sizeof(CHAR16))
+ #define MINIMUM_FS_INFO_LENGTH  (SIZE_OF_EFI_FILE_SYSTEM_INFO + MAX_FILE_NAME_LEN * sizeof(CHAR16))
+ #define IS_ROOT(File)           (File == File->FileSystem->RootFile)
+-
+-/* Logging */
+-#define FS_LOGLEVEL_NONE        0
+-#define FS_LOGLEVEL_ERROR       1
+-#define FS_LOGLEVEL_WARNING     2
+-#define FS_LOGLEVEL_INFO        3
+-#define FS_LOGLEVEL_DEBUG       4
+-#define FS_LOGLEVEL_EXTRA       5
+-#define FS_LOGLEVEL_TRACE       6
+-
+-typedef UINTN (EFIAPI *Print_t)        (IN CONST CHAR16 *fmt, ... );
+-extern Print_t PrintError;
+-extern Print_t PrintWarning;
+-extern Print_t PrintInfo;
+-extern Print_t PrintDebug;
+-extern Print_t PrintExtra;
+-
+-#define FS_ASSERT(a)  if(!(a)) do { Print(L"*** ASSERT FAILED: %a(%d): %a ***\n", __FILE__, __LINE__, #a); while(1); } while(0)
+-
+-/**
+- * Print an error message along with a human readable EFI status code
+- *
+- * @v Status		EFI status code
+- * @v Format		A non '\n' terminated error message string
+- * @v ...			Any extra parameters
+- */
+-#define PrintStatusError(Status, Format, ...) \
+-	if (LogLevel >= FS_LOGLEVEL_ERROR) { \
+-		Print(Format, ##__VA_ARGS__); PrintStatus(Status); }
+-
+ 
+ /* Forward declaration */
+ struct _EFI_FS;
+@@ -201,20 +94,12 @@
+ typedef VOID(*GRUB_MOD_INIT)(VOID);
+ typedef VOID(*GRUB_MOD_EXIT)(VOID);
+ 
+-extern UINTN LogLevel;
+-extern EFI_HANDLE EfiImageHandle;
+-extern EFI_GUID ShellVariable;
+ extern LIST_ENTRY FsListHead;
+ extern CHAR16 *ShortDriverName, *FullDriverName;
+ extern GRUB_MOD_INIT GrubModuleInit[];
+ extern GRUB_MOD_EXIT GrubModuleExit[];
+ 
+ #define strcpya(dst, src) CopyMem((VOID*)dst, (VOID*)src, strlena(src) + 1)
+-extern VOID SetLogging(VOID);
+-extern VOID PrintStatus(EFI_STATUS Status);
+-extern VOID GrubDriverInit(VOID);
+-extern VOID GrubDriverExit(VOID);
+-extern CHAR16 *GrubGetUuid(EFI_FS *This);
+ extern BOOLEAN GrubFSProbe(EFI_FS *This);
+ extern EFI_STATUS GrubDeviceInit(EFI_FS *This);
+ extern EFI_STATUS GrubDeviceExit(EFI_FS *This);
+@@ -231,10 +116,7 @@
+ extern UINT64 GrubGetFileSize(EFI_GRUB_FILE *File);
+ extern UINT64 GrubGetFileOffset(EFI_GRUB_FILE *File);
+ extern VOID GrubSetFileOffset(EFI_GRUB_FILE *File, UINT64 Offset);
+-extern CHAR16 *Utf8ToUtf16Alloc(CHAR8 *src);
+-extern EFI_STATUS Utf8ToUtf16NoAlloc(CHAR8 *src, CHAR16 *Dst, UINTN Len);
+ extern EFI_STATUS Utf8ToUtf16NoAllocUpdateLen(CHAR8 *src, CHAR16 *Dst, UINTN *Len);
+-extern CHAR8 *Utf16ToUtf8Alloc(CHAR16 *Src);
+ extern EFI_STATUS Utf16ToUtf8NoAlloc(CHAR16 *Src, CHAR8 *dst, UINTN len);
+ extern EFI_STATUS Utf16ToUtf8NoAllocUpdateLen(CHAR16 *Src, CHAR8 *dst, UINTN *len);
+ extern EFI_STATUS FSInstall(EFI_FS *This, EFI_HANDLE ControllerHandle);
+@@ -242,9 +124,6 @@
+ extern EFI_STATUS EFIAPI FileOpenVolume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This,
+ 		EFI_FILE_HANDLE *Root);
+ extern EFI_GUID *GetFSGuid(VOID);
+-extern EFI_STATUS PrintGuid (EFI_GUID *Guid);
+ extern INTN CompareDevicePaths(CONST EFI_DEVICE_PATH* dp1, CONST EFI_DEVICE_PATH* dp2);
+-extern CHAR16* StrDup(CONST CHAR16* Src);
+-extern CHAR16* ToDevicePathString(CONST EFI_DEVICE_PATH* DevicePath);
+ extern EFI_STATUS EFIAPI FSDriverInstall(EFI_HANDLE ImageHandle,
+ 		EFI_SYSTEM_TABLE* SystemTable);
+--- a/src/file.c
++++ b/src/file.c
+@@ -26,54 +26,20 @@
+ #include "driver.h"
+ #include "diskcache.h"
+ 
+-/**
+- * Get EFI file name (for debugging)
+- *
+- * @v file			EFI file
+- * @ret Name		Name
+- */
+-static const CHAR16 *
+-FileName(EFI_GRUB_FILE *File)
+-{
+-	EFI_STATUS Status;
+-	static CHAR16 Path[MAX_FILE_NAME_LEN];
+-
+-	Status = Utf8ToUtf16NoAlloc(File->path, Path, sizeof(Path));
+-	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not convert filename to UTF16");
+-		return NULL;
+-	}
+-
+-	return Path;
+-}
+-
+-/* Simple hook to populate the timestamp and directory flag when opening a file */
++
+ static INT32
+ InfoHook(const CHAR8 *name, const GRUB_DIRHOOK_INFO *Info, VOID *Data)
+ {
+ 	EFI_GRUB_FILE *File = (EFI_GRUB_FILE *) Data;
+-
+-	/* Look for a specific file */
++	 
+ 	if (strcmpa(name, File->basename) != 0)
+ 		return 0;
+-
+ 	File->IsDir = (BOOLEAN) (Info->Dir);
+ 	if (Info->MtimeSet)
+ 		File->Mtime = Info->Mtime;
+-
+ 	return 1;
+ }
+ 
+-/**
+- * Open file
+- *
+- * @v This			File handle
+- * @ret new			New file handle
+- * @v Name			File name
+- * @v Mode			File mode
+- * @v Attributes	File attributes (for newly-created files)
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileOpen(EFI_FILE_HANDLE This, EFI_FILE_HANDLE *New,
+ 		CHAR16 *Name, UINT64 Mode, UINT64 Attributes)
+@@ -81,90 +47,63 @@
+ 	EFI_STATUS Status;
+ 	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+ 	EFI_GRUB_FILE *NewFile;
+-
+-	// TODO: Use dynamic buffers?
++	 
+ 	char path[MAX_FILE_NAME_LEN], clean_path[MAX_FILE_NAME_LEN], *dirname;
+ 	INTN i, len;
+ 	BOOLEAN AbsolutePath = (*Name == L'\\');
+-
+-	PrintInfo(L"Open(" PERCENT_P L"%s, \"%s\")\n", (UINTN) This,
+-			IS_ROOT(File)?L" <ROOT>":L"", Name);
+-
+-	/* Fail unless opening read-only */
++	 
+ 	if (Mode != EFI_FILE_MODE_READ) {
+-		PrintWarning(L"File '%s' can only be opened in read-only mode\n", Name);
+ 		return EFI_WRITE_PROTECTED;
+ 	}
+-
+-	/* Additional failures */
++	 
+ 	if ((StrCmp(Name, L"..") == 0) && IS_ROOT(File)) {
+-		PrintInfo(L"Trying to open <ROOT>'s parent\n");
+ 		return EFI_NOT_FOUND;
+ 	}
+-
+-	/* See if we're trying to reopen current (which the EFI Shell insists on doing) */
++	 
+ 	if ((*Name == 0) || (StrCmp(Name, L".") == 0)) {
+-		PrintInfo(L"  Reopening %s\n", IS_ROOT(File)?L"<ROOT>":FileName(File));
+ 		File->RefCount++;
+ 		*New = This;
+-		PrintInfo(L"  RET: " PERCENT_P L"\n", (UINTN) *New);
+-		return EFI_SUCCESS;
+-	}
+-
+-	/* If we have an absolute path, don't bother completing with the parent */
++		return EFI_SUCCESS;
++	}
++	 
+ 	if (AbsolutePath) {
+ 		len = 0;
+ 	} else {
+ 		strcpya(path, File->path);
+ 		len = strlena(path);
+-		/* Add delimiter if needed */
+ 		if ((len == 0) || (path[len-1] != '/'))
+ 			path[len++] = '/';
+ 	}
+-
+-	/* Copy the rest of the path (converted to UTF-8) */
++	 
+ 	Status = Utf16ToUtf8NoAlloc(Name, &path[len], sizeof(path) - len);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not convert path to UTF-8");
+-		return Status;
+-	}
+-	/* Convert the delimiters */
++		return Status;
++	}
+ 	for (i = strlena(path) - 1 ; i >= len; i--) {
+ 		if (path[i] == '\\')
+ 			path[i] = '/';
+ 	}
+-
+-	/* We only want to handle absolute paths */
++	 
+ 	clean_path[0] = '/';
+-	/* Find out if we're dealing with root by removing the junk */
+ 	CopyPathRelative(&clean_path[1], path, MAX_FILE_NAME_LEN - 1);
+ 	if (clean_path[1] == 0) {
+-		/* We're dealing with the root */
+-		PrintInfo(L"  Reopening <ROOT>\n");
++		
+ 		*New = &File->FileSystem->RootFile->EfiFile;
+-		/* Must make sure that DirIndex is reset too (NB: no concurrent access!) */
+ 		File->FileSystem->RootFile->DirIndex = 0;
+-		PrintInfo(L"  RET: " PERCENT_P L"\n", (UINTN) *New);
+-		return EFI_SUCCESS;
+-	}
+-
+-	// TODO: eventually we should seek for already opened files and increase RefCount
+-	/* Allocate and initialise an instance of a file */
++		return EFI_SUCCESS;
++	}
++	 
+ 	Status = GrubCreateFile(&NewFile, File->FileSystem);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not instantiate file");
+-		return Status;
+-	}
+-
++		return Status;
++	}
+ 	NewFile->path = AllocatePool(strlena(clean_path)+1);
+ 	if (NewFile->path == NULL) {
+ 		GrubDestroyFile(NewFile);
+-		PrintError(L"Could not instantiate path\n");
+ 		return EFI_OUT_OF_RESOURCES;
+ 	}
+ 	strcpya(NewFile->path, clean_path);
+-
+-	/* Isolate the basename and dirname */
++	 
+ 	for (i = strlena(clean_path) - 1; i >= 0; i--) {
+ 		if (clean_path[i] == '/') {
+ 			clean_path[i] = 0;
+@@ -173,37 +112,27 @@
+ 	}
+ 	dirname = (i <= 0) ? "/" : clean_path;
+ 	NewFile->basename = &NewFile->path[i+1];
+-
+-	/* Find if we're working with a directory and fill the grub timestamp */
++	 
+ 	Status = GrubDir(NewFile, dirname, InfoHook, (VOID *) NewFile);
+ 	if (EFI_ERROR(Status)) {
+-		if (Status != EFI_NOT_FOUND)
+-			PrintStatusError(Status, L"Could not get file attributes for '%s'", Name);
+ 		FreePool(NewFile->path);
+ 		GrubDestroyFile(NewFile);
+ 		return Status;
+ 	}
+-
+-	/* Finally we can call on GRUB open() if it's a regular file */
++	 
+ 	if (!NewFile->IsDir) {
+ 		Status = GrubOpen(NewFile);
+ 		if (EFI_ERROR(Status)) {
+-			if (Status != EFI_NOT_FOUND)
+-				PrintStatusError(Status, L"Could not open file '%s'", Name);
+ 			FreePool(NewFile->path);
+ 			GrubDestroyFile(NewFile);
+ 			return Status;
+ 		}
+ 	}
+-
+ 	NewFile->RefCount++;
+ 	*New = &NewFile->EfiFile;
+-
+-	PrintInfo(L"  RET: " PERCENT_P L"\n", (UINTN) *New);
+-	return EFI_SUCCESS;
+-}
+-
+-/* Ex version */
++	return EFI_SUCCESS;
++}
++ 
+ static EFI_STATUS EFIAPI
+ FileOpenEx(EFI_FILE_HANDLE This, EFI_FILE_HANDLE *New, CHAR16 *Name,
+ 	UINT64 Mode, UINT64 Attributes, EFI_FILE_IO_TOKEN *Token)
+@@ -211,67 +140,32 @@
+ 	return FileOpen(This, New, Name, Mode, Attributes);
+ }
+ 
+-
+-/**
+- * Close file
+- *
+- * @v This			File handle
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileClose(EFI_FILE_HANDLE This)
+ {
+ 	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintInfo(L"Close(" PERCENT_P L"|'%s') %s\n", (UINTN) This, FileName(File),
+-		IS_ROOT(File)?L"<ROOT>":L"");
+-
+-	DiskCachePrintStats();
+-
+-	/* Nothing to do it this is the root */
++	 
+ 	if (IS_ROOT(File))
+ 		return EFI_SUCCESS;
+-
+ 	if (--File->RefCount == 0) {
+-		/* Close the file if it's a regular one */
+ 		if (!File->IsDir)
+ 			GrubClose(File);
+-		/* NB: basename points into File->path and does not need to be freed */
+ 		if (File->path != NULL)
+ 			FreePool(File->path);
+ 		GrubDestroyFile(File);
+ 	}
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/**
+- * Close and delete file
+- *
+- * @v This			File handle
+- * @ret Status		EFI status code
+- */
++	return EFI_SUCCESS;
++}
++
+ static EFI_STATUS EFIAPI
+ FileDelete(EFI_FILE_HANDLE This)
+ {
+-	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintError(L"Cannot delete '%s'\n", FileName(File));
+-
+-	/* Close file */
++	 
+ 	FileClose(This);
+-
+-	/* Warn of failure to delete */
++	 
+ 	return EFI_WARN_DELETE_FAILURE;
+ }
+ 
+-/* GRUB uses a callback for each directory entry, whereas EFI uses repeated
+- * firmware generated calls to FileReadDir() to get the info for each entry,
+- * so we have to reconcile the twos. For now, we'll re-issue a call to GRUB
+- * dir(), and run through all the entries (to find the one we
+- * are interested in) multiple times. Maybe later we'll try to optimize this
+- * by building a one-off chained list of entries that we can parse...
+- */
+ static INT32
+ DirHook(const CHAR8 *name, const GRUB_DIRHOOK_INFO *DirInfo, VOID *Data)
+ {
+@@ -281,67 +175,46 @@
+ 	UINTN tmpLen;
+ 	CHAR8 *filename = (CHAR8 *) (UINTN) Info->PhysicalSize;
+ 	EFI_TIME Time = { 1970, 01, 01, 00, 00, 00, 0, 0, 0, 0, 0};
+-
+-	// Eliminate '.' or '..'
++	 
+ 	if ((name[0] ==  '.') && ((name[1] == 0) || ((name[1] == '.') && (name[2] == 0))))
+ 		return 0;
+-
+-	/* Ignore any entry that doesn't match our index */
++	 
+ 	if ((*Index)-- != 0)
+ 		return 0;
+-
+ 	strcpya(filename, name);
+-
+ 	tmpLen = (UINTN)(Info->Size - SIZE_OF_EFI_FILE_INFO);
+ 	Status = Utf8ToUtf16NoAllocUpdateLen(filename, Info->FileName, &tmpLen);
+ 	Info->Size = SIZE_OF_EFI_FILE_INFO + tmpLen;
+ 	if (EFI_ERROR(Status)) {
+-		if (Status != EFI_BUFFER_TOO_SMALL)
+-			PrintStatusError(Status, L"Could not convert directory entry to UTF-8");
+ 		return (INT32) Status;
+ 	}
+-
+ 	if (DirInfo->MtimeSet)
+ 		GrubTimeToEfiTime(DirInfo->Mtime, &Time);
+ 	CopyMem(&Info->CreateTime, &Time, sizeof(Time));
+ 	CopyMem(&Info->LastAccessTime, &Time, sizeof(Time));
+ 	CopyMem(&Info->ModificationTime, &Time, sizeof(Time));
+-
+ 	Info->Attribute = EFI_FILE_READ_ONLY;
+ 	if (DirInfo->Dir)
+ 		Info->Attribute |= EFI_FILE_DIRECTORY;
+-
+ 	return 1;
+ }
+ 
+-/**
+- * Read directory entry
+- *
+- * @v file			EFI file
+- * @v Len			Length to read
+- * @v Data			Data buffer
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS
+ FileReadDir(EFI_GRUB_FILE *File, UINTN *Len, VOID *Data)
+ {
+ 	EFI_FILE_INFO *Info = (EFI_FILE_INFO *) Data;
+ 	EFI_STATUS Status;
+-	/* We temporarily repurpose the FileSize as a *signed* entry index */
+ 	INT64 *Index = (INT64 *) &Info->FileSize;
+-	/* And PhysicalSize as a pointer to our filename */
+ 	CHAR8 **basename = (CHAR8 **) &Info->PhysicalSize;
+ 	CHAR8 path[MAX_FILE_NAME_LEN];
+ 	EFI_GRUB_FILE *TmpFile = NULL;
+ 	INTN len;
+-
+-	/* Unless we can fit our maximum size, forget it */
++	 
+ 	if (*Len < MINIMUM_INFO_LENGTH) {
+ 		*Len = MINIMUM_INFO_LENGTH;
+ 		return EFI_BUFFER_TOO_SMALL;
+ 	}
+-
+-	/* Populate our Info template */
++	 
+ 	ZeroMem(Data, *Len);
+ 	Info->Size = *Len;
+ 	*Index = File->DirIndex;
+@@ -350,170 +223,94 @@
+ 	if (path[len-1] != '/')
+ 		path[len++] = '/';
+ 	*basename = &path[len];
+-
+-	/* Invoke GRUB's directory listing */
++	 
+ 	Status = GrubDir(File, File->path, DirHook, Data);
+ 	if (*Index >= 0) {
+-		/* No more entries */
+ 		*Len = 0;
+ 		return EFI_SUCCESS;
+ 	}
+-
+-	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Directory listing failed");
+-		return Status;
+-	}
+-
+-	/* Our Index/FileSize must be reset */
++	if (EFI_ERROR(Status)) {
++		return Status;
++	}
++	 
+ 	Info->FileSize = 0;
+ 	Info->PhysicalSize = 0;
+-
+-	/* For regular files, we still need to fill the size */
++	 
+ 	if (!(Info->Attribute & EFI_FILE_DIRECTORY)) {
+-		/* Open the file and read its size */
+ 		Status = GrubCreateFile(&TmpFile, File->FileSystem);
+ 		if (EFI_ERROR(Status)) {
+-			PrintStatusError(Status, L"Unable to create temporary file");
+ 			return Status;
+ 		}
+ 		TmpFile->path = path;
+-
+ 		Status = GrubOpen(TmpFile);
+-		if (EFI_ERROR(Status)) {
+-			// TODO: EFI_NO_MAPPING is returned for links...
+-			PrintStatusError(Status, L"Unable to obtain the size of '%s'", Info->FileName);
+-			/* Non fatal error */
+-		} else {
++		if (!EFI_ERROR(Status)) {
+ 			Info->FileSize = GrubGetFileSize(TmpFile);
+ 			Info->PhysicalSize = GrubGetFileSize(TmpFile);
+ 			GrubClose(TmpFile);
+ 		}
+ 		GrubDestroyFile(TmpFile);
+ 	}
+-
+ 	*Len = (UINTN) Info->Size;
+-	/* Advance to the next entry */
+ 	File->DirIndex++;
+-
+-//	PrintInfo(L"  Entry[%d]: '%s' %s\n", File->DirIndex-1, Info->FileName,
+-//			(Info->Attribute&EFI_FILE_DIRECTORY)?L"<DIR>":L"");
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/**
+- * Read from file
+- *
+- * @v This			File handle
+- * @v Len			Length to read
+- * @v Data			Data buffer
+- * @ret Status		EFI status code
+- */
++	return EFI_SUCCESS;
++}
++
+ static EFI_STATUS EFIAPI
+ FileRead(EFI_FILE_HANDLE This, UINTN *Len, VOID *Data)
+ {
+ 	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintInfo(L"Read(" PERCENT_P L"|'%s', %d) %s\n", (UINTN) This, FileName(File),
+-			*Len, File->IsDir?L"<DIR>":L"");
+-
+-	/* If this is a directory, then fetch the directory entries */
++	 
+ 	if (File->IsDir)
+ 		return FileReadDir(File, Len, Data);
+-
+ 	return GrubRead(File, Data, Len);
+ }
+-
+-/* Ex version */
++ 
+ static EFI_STATUS EFIAPI
+ FileReadEx(IN EFI_FILE_PROTOCOL *This, IN OUT EFI_FILE_IO_TOKEN *Token)
+ {
+ 	return FileRead(This, &(Token->BufferSize), Token->Buffer);
+ }
+ 
+-/**
+- * Write to file
+- *
+- * @v This			File handle
+- * @v Len			Length to write
+- * @v Data			Data buffer
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileWrite(EFI_FILE_HANDLE This, UINTN *Len, VOID *Data)
+ {
+-	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintError(L"Cannot write to '%s'\n", FileName(File));
+ 	return EFI_WRITE_PROTECTED;
+ }
+-
+-/* Ex version */
++ 
+ static EFI_STATUS EFIAPI
+ FileWriteEx(IN EFI_FILE_PROTOCOL *This, IN OUT EFI_FILE_IO_TOKEN *Token)
+ {
+ 	return FileWrite(This, &(Token->BufferSize), Token->Buffer);
+ }
+ 
+-/**
+- * Set file position
+- *
+- * @v This			File handle
+- * @v Position		New file position
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileSetPosition(EFI_FILE_HANDLE This, UINT64 Position)
+ {
+ 	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+ 	UINT64 FileSize;
+-
+-	PrintInfo(L"SetPosition(" PERCENT_P L"|'%s', %lld) %s\n", (UINTN) This,
+-		FileName(File), Position, (File->IsDir)?L"<DIR>":L"");
+-
+-	/* If this is a directory, reset the Index to the start */
++	 
+ 	if (File->IsDir) {
+ 		if (Position != 0)
+ 			return EFI_INVALID_PARAMETER;
+ 		File->DirIndex = 0;
+ 		return EFI_SUCCESS;
+ 	}
+-
+-	/* Fail if we attempt to seek past the end of the file (since
+-	 * we do not support writes).
+-	 */
++	
+ 	FileSize = GrubGetFileSize(File);
+-	/* Per specs */
+ 	if (Position == 0xFFFFFFFFFFFFFFFFULL) {
+ 		Position = FileSize;
+ 	} else if (Position > FileSize) {
+-		PrintError(L"'%s': Cannot seek to #%llx of %llx\n",
+-				FileName(File), Position, FileSize);
+ 		return EFI_UNSUPPORTED;
+ 	}
+-
+-	/* Set position */
++	 
+ 	GrubSetFileOffset(File, Position);
+-	PrintDebug(L"'%s': Position set to %llx\n",
+-			FileName(File), Position);
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/**
+- * Get file position
+- *
+- * @v This			File handle
+- * @ret Position	New file position
+- * @ret Status		EFI status code
+- */
++	return EFI_SUCCESS;
++}
++
+ static EFI_STATUS EFIAPI
+ FileGetPosition(EFI_FILE_HANDLE This, UINT64 *Position)
+ {
+ 	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintInfo(L"GetPosition(" PERCENT_P L"|'%s', %lld)\n", (UINTN) This, FileName(File));
+-
+ 	if (File->IsDir)
+ 		*Position = File->DirIndex;
+ 	else
+@@ -521,15 +318,6 @@
+ 	return EFI_SUCCESS;
+ }
+ 
+-/**
+- * Get file information
+- *
+- * @v This			File handle
+- * @v Type			Type of information
+- * @v Len			Buffer size
+- * @v Data			Buffer
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileGetInfo(EFI_FILE_HANDLE This, EFI_GUID *Type, UINTN *Len, VOID *Data)
+ {
+@@ -541,20 +329,13 @@
+ 	EFI_TIME Time;
+ 	CHAR8* label;
+ 	UINTN tmpLen;
+-
+-	PrintInfo(L"GetInfo(" PERCENT_P L"|'%s', %d) %s\n", (UINTN) This,
+-		FileName(File), *Len, File->IsDir?L"<DIR>":L"");
+-
+-	/* Determine information to return */
++	 
+ 	if (CompareMem(Type, &gEfiFileInfoGuid, sizeof(*Type)) == 0) {
+-
+-		/* Fill file information */
+-		PrintExtra(L"Get regular file information\n");
++		 
+ 		if (*Len < MINIMUM_INFO_LENGTH) {
+ 			*Len = MINIMUM_INFO_LENGTH;
+ 			return EFI_BUFFER_TOO_SMALL;
+ 		}
+-
+ 		ZeroMem(Data, SIZE_OF_EFI_FILE_INFO);
+ 		Info->Size = *Len;
+ 		Info->Attribute = EFI_FILE_READ_ONLY;
+@@ -562,46 +343,35 @@
+ 		CopyMem(&Info->CreateTime, &Time, sizeof(Time));
+ 		CopyMem(&Info->LastAccessTime, &Time, sizeof(Time));
+ 		CopyMem(&Info->ModificationTime, &Time, sizeof(Time));
+-
+ 		if (File->IsDir) {
+ 			Info->Attribute |= EFI_FILE_DIRECTORY;
+ 		} else {
+ 			Info->FileSize = GrubGetFileSize(File);
+ 			Info->PhysicalSize = GrubGetFileSize(File);
+ 		}
+-
+ 		tmpLen = (UINTN)(Info->Size - SIZE_OF_EFI_FILE_INFO);
+ 		Status = Utf8ToUtf16NoAllocUpdateLen(File->basename, Info->FileName, &tmpLen);
+ 		if (EFI_ERROR(Status)) {
+-			if (Status != EFI_BUFFER_TOO_SMALL)
+-				PrintStatusError(Status, L"Could not convert basename to UTF-16");
+ 			return Status;
+ 		}
+-
+ 		Info->Size = SIZE_OF_EFI_FILE_INFO + tmpLen;
+ 		*Len = (INTN)Info->Size;
+ 		return EFI_SUCCESS;
+-
+ 	} else if (CompareMem(Type, &gEfiFileSystemInfoGuid, sizeof(*Type)) == 0) {
+-
+-		/* Get file system information */
+-		PrintExtra(L"Get file system information\n");
++		 
+ 		if (*Len < MINIMUM_FS_INFO_LENGTH) {
+ 			*Len = MINIMUM_FS_INFO_LENGTH;
+ 			return EFI_BUFFER_TOO_SMALL;
+ 		}
+-
+ 		ZeroMem(Data, SIZE_OF_EFI_FILE_SYSTEM_INFO);
+ 		FSInfo->Size = *Len;
+ 		FSInfo->ReadOnly = 1;
+-		/* NB: This should really be cluster size, but we don't have access to that */
+ 		if (File->FileSystem->BlockIo2 != NULL) {
+ 			FSInfo->BlockSize = File->FileSystem->BlockIo2->Media->BlockSize;
+ 		} else {
+ 			FSInfo->BlockSize = File->FileSystem->BlockIo->Media->BlockSize;
+ 		}
+ 		if (FSInfo->BlockSize  == 0) {
+-			PrintWarning(L"Corrected Media BlockSize\n");
+ 			FSInfo->BlockSize = 512;
+ 		}
+ 		if (File->FileSystem->BlockIo2 != NULL) {
+@@ -611,146 +381,75 @@
+ 			FSInfo->VolumeSize = (File->FileSystem->BlockIo->Media->LastBlock + 1) *
+ 				FSInfo->BlockSize;
+ 		}
+-		/* No idea if we can easily get this for GRUB, and the device is RO anyway */
+ 		FSInfo->FreeSpace = 0;
+-
+ 		Status = GrubLabel(File, &label);
+ 		if (EFI_ERROR(Status)) {
+-			PrintStatusError(Status, L"Could not read disk label");
+ 			FSInfo->VolumeLabel[0] = 0;
+ 			*Len = SIZE_OF_EFI_FILE_SYSTEM_INFO + sizeof(CHAR16);
+ 		} else {
+ 			tmpLen = (INTN)(FSInfo->Size - SIZE_OF_EFI_FILE_SYSTEM_INFO);
+ 			Status = Utf8ToUtf16NoAllocUpdateLen(label, FSInfo->VolumeLabel, &tmpLen);
+ 			if (EFI_ERROR(Status)) {
+-				if (Status != EFI_BUFFER_TOO_SMALL)
+-					PrintStatusError(Status, L"Could not convert label to UTF-16");
+ 				return Status;
+ 			}
+ 			FSInfo->Size = SIZE_OF_EFI_FILE_SYSTEM_INFO + tmpLen;
+ 			*Len = (INTN)FSInfo->Size;
+ 		}
+ 		return EFI_SUCCESS;
+-
+ 	} else if (CompareMem(Type, &gEfiFileSystemVolumeLabelInfoIdGuid, sizeof(*Type)) == 0) {
+-
+-		/* Get the volume label */
++		 
+ 		Status = GrubLabel(File, &label);
+-		if (EFI_ERROR(Status)) {
+-			PrintStatusError(Status, L"Could not read disk label");
+-		} else {
++		if (!EFI_ERROR(Status)) {
+ 			Status = Utf8ToUtf16NoAllocUpdateLen(label, VLInfo->VolumeLabel, Len);
+ 			if (EFI_ERROR(Status)) {
+-				if (Status != EFI_BUFFER_TOO_SMALL)
+-					PrintStatusError(Status, L"Could not convert label to UTF-16");
+ 				return Status;
+ 			}
+ 		}
+ 		return EFI_SUCCESS;
+-
+ 	} else {
+-
+-		Print(L"'%s': Cannot get information of type ", FileName(File));
+-		PrintGuid(Type);
+-		Print(L"\n");
+ 		return EFI_UNSUPPORTED;
+-
+-	}
+-}
+-
+-/**
+- * Set file information
+- *
+- * @v This			File handle
+- * @v Type			Type of information
+- * @v Len			Buffer size
+- * @v Data			Buffer
+- * @ret Status		EFI status code
+- */
++	}
++}
++
+ static EFI_STATUS EFIAPI
+ FileSetInfo(EFI_FILE_HANDLE This, EFI_GUID *Type, UINTN Len, VOID *Data)
+ {
+-	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	Print(L"Cannot set information of type ");
+-	PrintGuid(Type);
+-	Print(L" for file '%s'\n", FileName(File));
+-
+ 	return EFI_WRITE_PROTECTED;
+ }
+ 
+-/**
+- * Flush file modified data
+- *
+- * @v This			File handle
+- * @v Type			Type of information
+- * @v Len			Buffer size
+- * @v Data			Buffer
+- * @ret Status		EFI status code
+- */
+ static EFI_STATUS EFIAPI
+ FileFlush(EFI_FILE_HANDLE This)
+ {
+-	EFI_GRUB_FILE *File = _CR(This, EFI_GRUB_FILE, EfiFile);
+-
+-	PrintInfo(L"Flush(" PERCENT_P L"|'%s')\n", (UINTN) This, FileName(File));
+-	return EFI_SUCCESS;
+-}
+-
+-/* Ex version */
++	return EFI_SUCCESS;
++}
++ 
+ static EFI_STATUS EFIAPI
+ FileFlushEx(EFI_FILE_HANDLE This, EFI_FILE_IO_TOKEN *Token)
+ {
+ 	return FileFlush(This);
+ }
+ 
+-/**
+- * Open root directory
+- *
+- * @v This			EFI simple file system
+- * @ret Root		File handle for the root directory
+- * @ret Status		EFI status code
+- */
+ EFI_STATUS EFIAPI
+ FileOpenVolume(EFI_SIMPLE_FILE_SYSTEM_PROTOCOL *This, EFI_FILE_HANDLE *Root)
+ {
+ 	EFI_FS *FSInstance = _CR(This, EFI_FS, FileIoInterface);
+-
+-	PrintInfo(L"OpenVolume\n");
+ 	*Root = &FSInstance->RootFile->EfiFile;
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/**
+- * Install the EFI simple file system protocol
+- * If successful this call instantiates a new FS#: drive, that is made
+- * available on the next 'map -r'. Note that all this call does is add
+- * the FS protocol. OpenVolume won't be called until a process tries
+- * to access a file or the root directory on the volume.
+- */
++	return EFI_SUCCESS;
++}
++
+ EFI_STATUS
+ FSInstall(EFI_FS *This, EFI_HANDLE ControllerHandle)
+ {
+ 	EFI_STATUS Status;
+-	CHAR16* DevicePathString;
+-
+-	/* Check if it's a filesystem we can handle */
++	 
+ 	if (!GrubFSProbe(This))
+ 		return EFI_UNSUPPORTED;
+-
+-	DevicePathString = ToDevicePathString(This->DevicePath);
+-	PrintInfo(L"FSInstall: %s\n", DevicePathString);
+-	FreePool(DevicePathString);
+-
+-	/* Initialize the root handle */
++	 
+ 	Status = GrubCreateFile(&This->RootFile, This);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not create root file");
+-		return Status;
+-	}
+-
+-	/* Setup the EFI part */
++		return Status;
++	}
++	 
+ 	This->RootFile->EfiFile.Revision = EFI_FILE_PROTOCOL_REVISION2;
+ 	This->RootFile->EfiFile.Open = FileOpen;
+ 	This->RootFile->EfiFile.Close = FileClose;
+@@ -766,30 +465,23 @@
+ 	This->RootFile->EfiFile.ReadEx = FileReadEx;
+ 	This->RootFile->EfiFile.WriteEx = FileWriteEx;
+ 	This->RootFile->EfiFile.FlushEx = FileFlushEx;
+-
+-	/* Setup the other attributes */
++	 
+ 	This->RootFile->path = "/";
+ 	This->RootFile->basename = &This->RootFile->path[1];
+ 	This->RootFile->IsDir = TRUE;
+-
+-	/* Install the simple file system protocol. */
++	 
+ 	Status = BS->InstallMultipleProtocolInterfaces(&ControllerHandle,
+ 			&gEfiSimpleFileSystemProtocolGuid, &This->FileIoInterface,
+ 			NULL);
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not install simple file system protocol");
+-		return Status;
+-	}
+-
+-	return EFI_SUCCESS;
+-}
+-
+-/* Uninstall EFI simple file system protocol */
++		return Status;
++	}
++	return EFI_SUCCESS;
++}
++ 
+ VOID
+ FSUninstall(EFI_FS *This, EFI_HANDLE ControllerHandle)
+ {
+-	PrintInfo(L"FSUninstall\n");
+-
+ 	BS->UninstallMultipleProtocolInterfaces(ControllerHandle,
+ 			&gEfiSimpleFileSystemProtocolGuid, &This->FileIoInterface,
+ 			NULL);
+--- a/src/grub.c
++++ b/src/grub.c
+@@ -21,237 +21,126 @@
+ #include <grub/err.h>
+ #include <grub/misc.h>
+ #include <grub/file.h>
+-#include <grub/crypto.h>
+-
+ #include "driver.h"
+ 
+-grub_file_filter_t EXPORT_VAR(grub_file_filters)[GRUB_FILE_FILTER_MAX];
+-
+-void
+-grub_exit(void)
+-{
+-	ST->BootServices->Exit(EfiImageHandle, EFI_SUCCESS, 0, NULL);
+-	for (;;) ;
+-}
+-
+-/* Screen I/O */
+-struct grub_term_input *EXPORT_VAR(grub_term_inputs) = NULL;
+-
+-void
+-grub_refresh(void) { }
+-
+-int
+-grub_getkey(void)
+-{
+-	EFI_INPUT_KEY Key;
+-
+-	while (ST->ConIn->ReadKeyStroke(ST->ConIn, &Key) == EFI_NOT_READY);
+-	return (int) Key.UnicodeChar;
+-}
+-
+-static void
+-grub_xputs_dumb(const char *str)
+-{
+-	APrint((CHAR8 *)str);
+-}
+-
+-void (*grub_xputs)(const char *str) = grub_xputs_dumb;
+-
+-/* 
+- * Read an EFI shell variable
+- * This is only ever used by grub to get the "debug" level.
+- */
+-const char *
+-grub_env_get(const char *var)
+-{
+-	return (LogLevel >= FS_LOGLEVEL_TRACE && AsciiStrCmp(var, "debug") == 0) ? "all" : NULL;
+-}
+-
+-/* Memory management
+- * NB: We must keep track of the size allocated for grub_realloc
+- */
+ void *
+ grub_malloc(grub_size_t size)
+ {
+ 	grub_size_t *ptr;
+-
+ 	ptr = (grub_size_t *) AllocatePool((UINTN)(size + sizeof(grub_size_t)));
+-
+ 	if (ptr != NULL)
+ 		*ptr++ = size;
+-
+ 	return (void *) ptr;
+ }
+-
+ void *
+ grub_zalloc(grub_size_t size)
+ {
+ 	grub_size_t *ptr;
+-
+ 	ptr = (grub_size_t *) AllocateZeroPool((UINTN)(size + sizeof(grub_size_t)));
+-
+ 	if (ptr != NULL)
+ 		*ptr++ = size;
+-
+ 	return (void *) ptr;
+ }
+-
+ void*
+ grub_calloc(grub_size_t nb_items, grub_size_t size)
+ {
+ 	return grub_zalloc(nb_items * size);
+ }
+-
+ void
+ grub_free(void *p)
+ {
+ 	grub_size_t *ptr = (grub_size_t *) p;
+-
+ 	if (ptr != NULL) {
+ 		ptr = &ptr[-1];
+ 		FreePool(ptr);
+ 	}
+ }
+-
+-int
+-grub_is_lockdown(void)
+-{
+-	return 0;
+-}
+-
+ void *
+ grub_realloc(void *p, grub_size_t new_size)
+ {
+ 	grub_size_t *ptr = (grub_size_t *) p;
+-
+-	// NB: The GRUB implementation allows grub_realloc(NULL, new_size) to alloc a new buffer
++	 
+ 	if (ptr == NULL)
+ 		return grub_malloc(new_size);
+-
+ 	ptr = &ptr[-1];
+ 	ptr = ReallocatePool((UINTN)*ptr, (UINTN)(new_size + sizeof(grub_size_t)), ptr);
+ 	if (ptr != NULL)
+ 		*ptr++ = new_size;
+ 	return ptr;
+ }
+-
+-/* Convert a grub_err_t to EFI_STATUS */
++ 
+ EFI_STATUS
+ GrubErrToEFIStatus(grub_err_t err)
+ {
+-	// The following are defined in EFI but unused here:
+-	// EFI_BAD_BUFFER_SIZE
+-	// EFI_WRITE_PROTECTED
+-	// EFI_VOLUME_FULL
+-	// EFI_MEDIA_CHANGED
+-	// EFI_NO_MEDIA
+-	// EFI_NOT_STARTED
+-	// EFI_ALREADY_STARTED
+-	// EFI_ABORTED
+-	// EFI_END_OF_MEDIA
+-	// EFI_NO_RESPONSE
+-	// EFI_PROTOCOL_ERROR
+-	// EFI_INCOMPATIBLE_VERSION
+-
+-	if ((grub_errno != 0) && (LogLevel > FS_LOGLEVEL_INFO))
+-		/* NB: Calling grub_print_error() will reset grub_errno */
+-		grub_print_error();
+-
+ 	switch (err) {
+ 	case GRUB_ERR_NONE:
+ 		return EFI_SUCCESS;
+-
+ 	case GRUB_ERR_BAD_MODULE:
+ 		return EFI_LOAD_ERROR;
+-
+ 	case GRUB_ERR_OUT_OF_RANGE:
+ 		return EFI_BUFFER_TOO_SMALL;
+-
+ 	case GRUB_ERR_OUT_OF_MEMORY:
+ 	case GRUB_ERR_SYMLINK_LOOP:
+ 		return EFI_OUT_OF_RESOURCES;
+-
+ 	case GRUB_ERR_BAD_FILE_TYPE:
+ 		return EFI_NO_MAPPING;
+-
+ 	case GRUB_ERR_FILE_NOT_FOUND:
+ 	case GRUB_ERR_UNKNOWN_DEVICE:
+ 	case GRUB_ERR_UNKNOWN_FS:
+ 		return EFI_NOT_FOUND;
+-
+ 	case GRUB_ERR_FILE_READ_ERROR:
+ 	case GRUB_ERR_BAD_DEVICE:
+ 	case GRUB_ERR_READ_ERROR:
+ 	case GRUB_ERR_WRITE_ERROR:
+ 	case GRUB_ERR_IO:
+ 		return EFI_DEVICE_ERROR;
+-
+ 	case GRUB_ERR_BAD_PART_TABLE:
+ 	case GRUB_ERR_BAD_FS:
+ 		return EFI_VOLUME_CORRUPTED;
+-
+ 	case GRUB_ERR_BAD_FILENAME:
+ 	case GRUB_ERR_BAD_ARGUMENT:
+ 	case GRUB_ERR_BAD_NUMBER:
+ 	case GRUB_ERR_UNKNOWN_COMMAND:
+ 	case GRUB_ERR_INVALID_COMMAND:
+ 		return EFI_INVALID_PARAMETER;
+-
+ 	case GRUB_ERR_NOT_IMPLEMENTED_YET:
+ 		return EFI_UNSUPPORTED;
+-
+ 	case GRUB_ERR_TIMEOUT:
+ 		return EFI_TIMEOUT;
+-
+ 	case GRUB_ERR_ACCESS_DENIED:
+ 		return EFI_ACCESS_DENIED;
+-
+ 	case GRUB_ERR_WAIT:
+ 		return EFI_NOT_READY;
+-
+ 	case GRUB_ERR_EXTRACTOR:
+ 	case GRUB_ERR_BAD_COMPRESSED_DATA:
+ 		return EFI_CRC_ERROR;
+-
+ 	case GRUB_ERR_EOF:
+ 		return EFI_END_OF_FILE;
+-
+ 	case GRUB_ERR_BAD_SIGNATURE:
+ 		return EFI_SECURITY_VIOLATION;
+-
+ 	default:
+ 		return EFI_NOT_FOUND;
+ 	}
+ }
+ 
+-/* The following is adapted from glibc's (offtime.c, etc.)
+- */
+ 
+-/* How many days come before each month (0-12). */
+ static const unsigned short int __mon_yday[2][13] = {
+-	/* Normal years.  */
+ 	{ 0, 31, 59, 90, 120, 151, 181, 212, 243, 273, 304, 334, 365 },
+-	/* Leap years.  */
+ 	{ 0, 31, 60, 91, 121, 152, 182, 213, 244, 274, 305, 335, 366 }
+ };
+ 
+-/* Nonzero if YEAR is a leap year (every 4 years,
+-   except every 100th isn't, and every 400th is). */
+ #define __isleap(year) \
+ 	((year) % 4 == 0 && ((year) % 100 != 0 || (year) % 400 == 0))
+-
+ #define SECS_PER_HOUR         (60 * 60)
+ #define SECS_PER_DAY          (SECS_PER_HOUR * 24)
+ #define DIV(a, b)             ((a) / (b) - ((a) % (b) < 0))
+ #define LEAPS_THRU_END_OF(y)  (DIV (y, 4) - DIV (y, 100) + DIV (y, 400))
+-
+-/* Compute an EFI_TIME representation of a GRUB's mtime_t */
++ 
+ VOID
+ GrubTimeToEfiTime(const INT64 t, EFI_TIME *tp)
+ {
+ 	INT64 days, rem, y;
+ 	const unsigned short int *ip;
+-
+ 	days = t / SECS_PER_DAY;
+ 	rem = t % SECS_PER_DAY;
+ 	while (rem < 0) {
+@@ -267,12 +156,9 @@
+ 	tp->Minute = (UINT8) (rem / 60);
+ 	tp->Second = (UINT8) (rem % 60);
+ 	y = 1970;
+-
+ 	while (days < 0 || days >= (__isleap (y) ? 366 : 365)) {
+-		/* Guess a corrected year, assuming 365 days per year. */
+ 		CONST INT64 yg = y + days / 365 - (days % 365 < 0);
+-
+-		/* Adjust DAYS and Y to match the guessed year. */
++		 
+ 		days -= ((yg - y) * 365
+ 			+ LEAPS_THRU_END_OF (yg - 1)
+ 			- LEAPS_THRU_END_OF (y - 1));
+@@ -286,101 +172,3 @@
+ 	tp->Month = (UINT8) (y + 1);
+ 	tp->Day = (UINT8) (days + 1);
+ }
+-
+-/* Need to reimplement a gcrypt compatible CRC32 for latest gzio.c
+- * but heck if I'm going to lose 1 KB of space over it!
+- * TODO: Move this to an EXTRAMODULE?
+- */
+-static grub_int32_t *crc32_table;
+-
+-typedef struct {
+-	grub_uint32_t CRC;
+-	grub_uint8_t buf[4];
+-} CRC_CONTEXT;
+-
+-static grub_uint32_t
+-update_crc32(grub_uint32_t crc, const void *buf_arg, size_t len)
+-{
+-	const char *buf = buf_arg;
+-	size_t n;
+-
+-	for (n = 0; n < len; n++)
+-		crc = crc32_table[(crc ^ buf[n]) & 0xff] ^ (crc >> 8);
+-
+-	return crc;
+-}
+-
+-static grub_uint32_t
+-reflect(grub_uint32_t ref, int len)
+-{
+-	grub_uint32_t result = 0;
+-	int i;
+-
+-	for (i = 1; i <= len; i++) {
+-		if (ref & 1)
+-			result |= 1 << (len - i);
+-		ref >>= 1;
+-	}
+-
+-	return result;
+-}
+-
+-static void
+-crc32_init(void *context, unsigned int flags __attribute__((unused)))
+-{
+-	CRC_CONTEXT *ctx = (CRC_CONTEXT *)context;
+-	ctx->CRC = 0 ^ 0xffffffffL;
+-
+-	crc32_table = grub_malloc(256 * sizeof(grub_int32_t));
+-	grub_uint32_t polynomial = 0x1edc6f41;
+-	int i, j;
+-	for (i = 0; i < 256; i++) {
+-		crc32_table[i] = reflect(i, 8) << 24;
+-		for (j = 0; j < 8; j++)
+-			crc32_table[i] = (crc32_table[i] << 1) ^
+-			(crc32_table[i] & (1 << 31) ? polynomial : 0);
+-		crc32_table[i] = reflect(crc32_table[i], 32);
+-	}
+-}
+-
+-static void
+-crc32_write(void *context, const void *inbuf, size_t inlen)
+-{
+-	CRC_CONTEXT *ctx = (CRC_CONTEXT *)context;
+-	if (!inbuf)
+-		return;
+-	ctx->CRC = update_crc32(ctx->CRC, inbuf, inlen);
+-}
+-
+-static grub_uint8_t *
+-crc32_read(void *context)
+-{
+-	CRC_CONTEXT *ctx = (CRC_CONTEXT *)context;
+-	return ctx->buf;
+-}
+-
+-static void
+-crc32_final(void *context)
+-{
+-	CRC_CONTEXT *ctx = (CRC_CONTEXT *)context;
+-	ctx->CRC ^= 0xffffffffL;
+-	ctx->buf[0] = (ctx->CRC >> 24) & 0xFF;
+-	ctx->buf[1] = (ctx->CRC >> 16) & 0xFF;
+-	ctx->buf[2] = (ctx->CRC >> 8) & 0xFF;
+-	ctx->buf[3] = (ctx->CRC) & 0xFF;
+-	grub_free(crc32_table);
+-}
+-
+-gcry_md_spec_t _gcry_digest_spec_crc32 =
+-{
+-	.name = "CRC32",
+-	.asnoid = NULL,
+-	.asnlen = 0,
+-	.oids = NULL,
+-	.mdlen = 4,
+-	.init = crc32_init,
+-	.write = crc32_write,
+-	.final = crc32_final,
+-	.read = crc32_read,
+-	.contextsize = sizeof(CRC_CONTEXT)
+-};
+--- a/src/grub_file.c
++++ b/src/grub_file.c
+@@ -24,191 +24,46 @@
+ #include <grub/fs.h>
+ #include <grub/dl.h>
+ #include <grub/file.h>
+-
+ #include "driver.h"
+ #include "diskcache.h"
+-
+-/* The file system list should only ever contain one element */
++ 
+ grub_fs_t grub_fs_list = NULL;
+-
+-/* Keep track of the mounted filesystems */
++ 
+ LIST_ENTRY FsListHead;
+-
+-grub_file_filter_t grub_file_filters_all[GRUB_FILE_FILTER_MAX];
+-grub_file_filter_t grub_file_filters_enabled[GRUB_FILE_FILTER_MAX];
+-
+ extern EFI_STATUS GrubErrToEFIStatus(grub_err_t err);
+-
+-/* Don't care about refcounts for a standalone EFI FS driver */
+-grub_uint64_t
+-grub_dl_ref(grub_dl_t mod) {
+-	return 0;
+-}
+-
+-grub_uint64_t
+-grub_dl_unref(grub_dl_t mod) {
+-	return 0;
+-};
+-
+-/* The following 3 calls are copied verbatim from the GRUB kernel */
+-grub_ssize_t
+-grub_file_read (grub_file_t file, void *buf, grub_size_t len)
+-{
+-	grub_ssize_t res;
+-	grub_disk_read_hook_t read_hook;
+-	void *read_hook_data;
+-
+-	if (file->offset > file->size)
+-	{
+-		grub_error (GRUB_ERR_OUT_OF_RANGE,
+-			N_("attempt to read past the end of file"));
+-		return -1;
+-	}
+-
+-	if (len == 0)
+-		return 0;
+-
+-	if (len > file->size - file->offset)
+-		len = (grub_size_t) (file->size - file->offset);
+-
+-	/* Prevent an overflow.  */
+-	if ((grub_ssize_t) len < 0)
+-		len >>= 1;
+-
+-	if (len == 0)
+-		return 0;
+-	read_hook = file->read_hook;
+-	read_hook_data = file->read_hook_data;
+-	if (!file->read_hook)
+-	{
+-		file->read_hook = grub_file_progress_hook;
+-		file->read_hook_data = file;
+-		file->progress_offset = file->offset;
+-	}
+-	res = (file->fs->fs_read) (file, buf, len);
+-	file->read_hook = read_hook;
+-	file->read_hook_data = read_hook_data;
+-	if (res > 0)
+-		file->offset += res;
+-
+-	return res;
+-}
+-
+-grub_err_t
+-grub_file_close(grub_file_t file)
+-{
+-	if (file->fs->fs_close)
+-		(file->fs->fs_close) (file);
+-
+-	if (file->device)
+-		grub_device_close (file->device);
+-	grub_free (file->name);
+-	grub_free (file);
+-	return grub_errno;
+-}
+-
+-grub_off_t
+-grub_file_seek(grub_file_t file, grub_off_t offset)
+-{
+-	grub_off_t old;
+-
+-	if (offset > file->size)
+-	{
+-		grub_error (GRUB_ERR_OUT_OF_RANGE,
+-			N_("attempt to seek outside of the file"));
+-		return (grub_off_t)-1;
+-	}
+-
+-	old = file->offset;
+-	file->offset = offset;
+-
+-	return old;
+-}
+-
+-int
+-grub_device_iterate(grub_device_iterate_hook_t hook, void *hook_data)
+-{
+-	PrintError(L"grub_device_iterate() called\n");
+-	return 0;
+-}
+-
+-grub_disk_read_hook_t grub_file_progress_hook = NULL;
+-
++ 
++ 
+ grub_err_t
+ grub_disk_read(grub_disk_t disk, grub_disk_addr_t sector,
+ 		grub_off_t offset, grub_size_t size, void *buf)
+ {
+ 	EFI_STATUS Status;
+ 	EFI_FS* FileSystem = (EFI_FS *) disk->data;
+-
+-	FS_ASSERT(FileSystem != NULL);
+-	FS_ASSERT(FileSystem->DiskIo != NULL);
+-	FS_ASSERT(FileSystem->BlockIo != NULL);
+-
+-	/* NB: We could get the actual blocksize through FileSystem->BlockIo->Media->BlockSize
+-	 * but GRUB uses the fixed GRUB_DISK_SECTOR_SIZE, so we follow suit
+-	 *
+-	 * Cached; see src/diskcache.c.
+-	 */
++	
+ 	Status = DiskCacheRead(FileSystem, (UINT64)sector * GRUB_DISK_SECTOR_SIZE + offset,
+ 		(UINTN)size, buf);
+-
+ 	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not read block at address %08x", sector);
+-		return grub_error (GRUB_ERR_READ_ERROR, N_("Could not read block"));
+-	}
+-
++		return grub_error (GRUB_ERR_READ_ERROR);
++	}
+ 	return 0;
+ }
+-
+ grub_uint64_t
+ grub_disk_native_sectors (grub_disk_t disk)
+ {
+ 	EFI_FS* FileSystem = (EFI_FS *) disk->data;
+-
+-	FS_ASSERT(FileSystem != NULL);
+-	FS_ASSERT(FileSystem->BlockIo != NULL);
+-
+ 	if (FileSystem->BlockIo2 != NULL) {
+ 		return ((FileSystem->BlockIo2->Media->LastBlock + 1) *
+ 			FileSystem->BlockIo2->Media->BlockSize) >> GRUB_DISK_SECTOR_BITS;
+ 	}
+-
+ 	return ((FileSystem->BlockIo->Media->LastBlock + 1) *
+ 			FileSystem->BlockIo->Media->BlockSize) >> GRUB_DISK_SECTOR_BITS;
+ }
+-
+-grub_disk_dev_t grub_disk_dev_list;
+-
+-void
+-grub_disk_dev_register(grub_disk_dev_t dev)
+-{
+-	dev->next = grub_disk_dev_list;
+-	grub_disk_dev_list = dev;
+-}
+-
+-void
+-grub_disk_dev_unregister(grub_disk_dev_t dev)
+-{
+-	grub_disk_dev_t *p, q;
+-
+-	for (p = &grub_disk_dev_list, q = *p; q; p = &(q->next), q = q->next)
+-		if (q == dev)
+-		{
+-			*p = q->next;
+-			break;
+-		}
+-}
+-
+ grub_device_t
+ grub_device_open(const char *name)
+ {
+ 	EFI_DEVICE_PATH* DevicePath = (EFI_DEVICE_PATH*)name;
+ 	EFI_FS *FileSystem;
+ 	struct grub_device* device;
+-
+-	FS_ASSERT(DevicePath != NULL);
+-
+ 	for (FileSystem = (EFI_FS *) FORWARD_LINK_REF(FsListHead); FileSystem != (EFI_FS *) &FsListHead;
+ 			FileSystem = (EFI_FS *) FileSystem->Flink) {
+ 		if (CompareDevicePaths(FileSystem->DevicePath, DevicePath) == 0)
+@@ -216,7 +71,6 @@
+ 	}
+ 	if (FileSystem == (EFI_FS *) &FsListHead)
+ 		return NULL;
+-
+ 	device = grub_zalloc(sizeof(struct grub_device));
+ 	if (device == NULL)
+ 		return NULL;
+@@ -225,64 +79,44 @@
+ 		grub_free(device);
+ 		return NULL;
+ 	}
+-	/* The private disk data is a pointer back to our EFI_FS */
+ 	device->disk->data = (void *) FileSystem;
+-	/* Ideally, we'd fill the other disk data, such as total_sectors, name
+-	 * and so on, but since we're doing the actual disk access through EFI
+-	 * DiskIO rather than GRUB's disk.c, this doesn't seem to be needed.
+-	 */
+ 
+ 	return device;
+ }
+-
+ grub_err_t
+ grub_device_close(grub_device_t device)
+ {
+-	FS_ASSERT(device != NULL);
+-
+ 	grub_free(device->disk);
+ 	grub_free(device);
+ 	return 0;
+ }
+-
+ EFI_STATUS
+ GrubDeviceInit(EFI_FS *FileSystem)
+ {
+-	FS_ASSERT(FileSystem->DevicePath != NULL);
+-
+-	/* A MediaId can be reused for a different medium. */
++	 
+ 	DiskCacheFlush();
+-
+-	/* Insert this filesystem in our list */
++	 
+ 	InsertTailList(&FsListHead, (LIST_ENTRY *) FileSystem);
+-
+ 	FileSystem->GrubDevice = (VOID *) grub_device_open((const char *)FileSystem->DevicePath);
+-
+ 	if (FileSystem->GrubDevice == NULL) {
+ 		RemoveEntryList((LIST_ENTRY *)FileSystem);
+ 		return EFI_NOT_FOUND;
+ 	}
+-
+-	return EFI_SUCCESS;
+-}
+-
++	return EFI_SUCCESS;
++}
+ EFI_STATUS
+ GrubDeviceExit(EFI_FS *FileSystem)
+ {
+-	DiskCachePrintStats();
+ 	DiskCacheFlush();
+ 	grub_device_close((grub_device_t) FileSystem->GrubDevice);
+ 	RemoveEntryList((LIST_ENTRY *)FileSystem);
+-
+-	return EFI_SUCCESS;
+-}
+-
++	return EFI_SUCCESS;
++}
+ EFI_STATUS
+ GrubCreateFile(EFI_GRUB_FILE **File, EFI_FS *FileSystem)
+ {
+ 	EFI_GRUB_FILE *NewFile;
+ 	grub_file_t f;
+-
+ 	NewFile = AllocateZeroPool(sizeof(*NewFile));
+ 	if (NewFile == NULL)
+ 		return EFI_OUT_OF_RESOURCES;
+@@ -291,20 +125,15 @@
+ 		FreePool(NewFile);
+ 		return EFI_OUT_OF_RESOURCES;
+ 	}
+-
+-	/* Initialize the attributes */
++	 
+ 	NewFile->FileSystem = FileSystem;
+-	FS_ASSERT(FileSystem->RootFile != NULL);
+ 	CopyMem(&NewFile->EfiFile, &FileSystem->RootFile->EfiFile, sizeof(EFI_FILE));
+-
+ 	f = (grub_file_t) NewFile->GrubFile;
+ 	f->device = (grub_device_t) FileSystem->GrubDevice;
+ 	f->fs = grub_fs_list;
+-
+ 	*File = NewFile;
+ 	return EFI_SUCCESS;
+ }
+-
+ VOID
+ GrubDestroyFile(EFI_GRUB_FILE *File)
+ {
+@@ -314,21 +143,18 @@
+ 		FreePool(File->GrubFile);
+ 	FreePool(File);
+ }
+-
+ UINT64
+ GrubGetFileSize(EFI_GRUB_FILE *File)
+ {
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	return (UINT64) f->size;
+ }
+-
+ UINT64
+ GrubGetFileOffset(EFI_GRUB_FILE *File)
+ {
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	return (UINT64) f->offset;
+ }
+-
+ VOID
+ GrubSetFileOffset(EFI_GRUB_FILE *File, UINT64 Offset)
+ {
+@@ -336,9 +162,6 @@
+ 	f->offset = (grub_off_t) Offset;
+ }
+ 
+-/*
+- * The following provides an EFI interface for each basic GRUB fs call
+- */
+ EFI_STATUS
+ GrubDir(EFI_GRUB_FILE *File, const CHAR8 *path,
+ 		GRUB_DIRHOOK Hook, VOID *HookData)
+@@ -346,34 +169,28 @@
+ 	grub_fs_t p = grub_fs_list;
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	grub_err_t rc;
+-
+ 	grub_errno = 0;
+ 	rc = p->fs_dir(f->device, path, (grub_fs_dir_hook_t) Hook, HookData);
+ 	return GrubErrToEFIStatus(rc);
+ }
+-
+ EFI_STATUS
+ GrubOpen(EFI_GRUB_FILE *File)
+ {
+ 	grub_fs_t p = grub_fs_list;
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	grub_err_t rc;
+-
+ 	grub_errno = 0;
+ 	rc = p->fs_open(f, File->path);
+ 	return GrubErrToEFIStatus(rc);
+ }
+-
+ VOID
+ GrubClose(EFI_GRUB_FILE *File)
+ {
+ 	grub_fs_t p = grub_fs_list;
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+-
+ 	grub_errno = 0;
+ 	p->fs_close(f);
+ }
+-
+ EFI_STATUS
+ GrubRead(EFI_GRUB_FILE *File, VOID *Data, UINTN *Len)
+ {
+@@ -381,41 +198,32 @@
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	grub_ssize_t len;
+ 	UINTN Remaining;
+-
+-	/* GRUB may return an error if we request more data than available */
++	 
+ 	Remaining = (UINTN)((f->size > f->offset)? f->size - f->offset : 0);
+-
+ 	if (*Len > Remaining)
+ 		*Len = Remaining;
+-
+ 	grub_errno = 0;
+ 	len = p->fs_read(f, (char *) Data, (grub_size_t) *Len);
+-
+ 	if (len < 0) {
+ 		*Len = 0;
+ 		return GrubErrToEFIStatus(grub_errno);
+ 	}
+-
+-	/* You'd think that GRUB read() would increase the offset... */
++	 
+ 	f->offset += len;
+ 	*Len = (UINTN)len;
+-
+-	return EFI_SUCCESS;
+-}
+-
++	return EFI_SUCCESS;
++}
+ EFI_STATUS
+ GrubLabel(EFI_GRUB_FILE *File, CHAR8 **label)
+ {
+ 	grub_fs_t p = grub_fs_list;
+ 	grub_file_t f = (grub_file_t) File->GrubFile;
+ 	grub_err_t rc;
+-
+ 	grub_errno = 0;
+ 	rc = p->fs_label(f->device, (char **) label);
+ 	return GrubErrToEFIStatus(rc);
+ }
+-
+-/* Helper for GrubFSProbe.  */
++ 
+ static int
+ probe_dummy_iter (const char *filename __attribute__ ((unused)),
+ 		const struct grub_dirhook_info *info __attribute__ ((unused)),
+@@ -423,45 +231,18 @@
+ {
+ 	return 1;
+ }
+-
+ BOOLEAN
+ GrubFSProbe(EFI_FS *FileSystem)
+ {
+ 	grub_fs_t p = grub_fs_list;
+ 	grub_device_t device = (grub_device_t) FileSystem->GrubDevice;
+-
+ 	if ((p == NULL) || (device->disk == NULL)) {
+-		PrintError(L"GrubFSProbe: uninitialized variables\n");
+ 		return FALSE;
+ 	}
+-
+ 	grub_errno = 0;
+ 	(p->fs_dir)(device, "/", probe_dummy_iter, NULL);
+ 	if (grub_errno != 0) {
+-		if (LogLevel >= FS_LOGLEVEL_INFO)
+-			grub_print_error();	/* NB: this call will reset grub_errno */
+ 		return FALSE;
+ 	}
+ 	return TRUE;
+ }
+-
+-CHAR16 *
+-GrubGetUuid(EFI_FS* FileSystem)
+-{
+-	EFI_STATUS Status;
+-	grub_fs_t p = grub_fs_list;
+-	grub_device_t device = (grub_device_t) FileSystem->GrubDevice;
+-	static CHAR16 Uuid[36];
+-	char* uuid;
+-
+-	if (p->fs_uuid(device, &uuid) || (uuid == NULL))
+-		return NULL;
+-
+-	Status = Utf8ToUtf16NoAlloc(uuid, Uuid, ARRAYSIZE(Uuid));
+-	if (EFI_ERROR(Status)) {
+-		PrintStatusError(Status, L"Could not convert UUID to UTF-16");
+-		return NULL;
+-	}
+-
+-	return Uuid;
+-}
+--- a/src/logging.c
++++ /dev/null
+@@ -1,83 +0,0 @@
+-/* logging.c - EFI logging */
+-/*
+- *  Copyright © 2014-2017 Pete Batard <pete@akeo.ie>
+- *
+- *  Note: This file has been relicensed from GPLv3+ to GPLv2+ by formal
+- *  agreement of all of its contributors.
+- *
+- *  This program is free software: you can redistribute it and/or modify
+- *  it under the terms of the GNU General Public License as published by
+- *  the Free Software Foundation, either version 2 of the License, or
+- *  (at your option) any later version.
+- *
+- *  This program is distributed in the hope that it will be useful,
+- *  but WITHOUT ANY WARRANTY; without even the implied warranty of
+- *  MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+- *  GNU General Public License for more details.
+- *
+- *  You should have received a copy of the GNU General Public License
+- *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+- */
+-
+-#include "driver.h"
+-
+-/* Not defined in gnu-efi yet */
+-#define SHELL_VARIABLE_GUID { \
+-	0x158def5a, 0xf656, 0x419c, { 0xb0, 0x27, 0x7a, 0x31, 0x92, 0xc0, 0x79, 0xd2 } \
+-}
+-extern EFI_GUID gShellVariableGuid;
+-EFI_GUID ShellVariable = SHELL_VARIABLE_GUID;
+-
+-static UINTN EFIAPI PrintNone(IN CONST CHAR16 *fmt, ... ) { return 0; }
+-Print_t PrintError = PrintNone;
+-Print_t PrintWarning = PrintNone;
+-Print_t PrintInfo = PrintNone;
+-Print_t PrintDebug = PrintNone;
+-Print_t PrintExtra = PrintNone;
+-Print_t* PrintTable[] = { &PrintError, &PrintWarning, &PrintInfo,
+-		&PrintDebug, &PrintExtra };
+-
+-/* Global driver verbosity level */
+-#if !defined(DEFAULT_LOGLEVEL)
+-#define DEFAULT_LOGLEVEL FS_LOGLEVEL_NONE
+-#endif
+-UINTN LogLevel = DEFAULT_LOGLEVEL;
+-
+-/**
+- * Print status
+- *
+- * @v Status		EFI status code
+- */
+-VOID
+-PrintStatus(EFI_STATUS Status)
+-{
+-#if defined(__MAKEWITH_GNUEFI)
+-	CHAR16 StatusString[64];
+-	StatusToString(StatusString, Status);
+-	// Make sure the Status is unsigned 32 bits
+-	Print(L": [%d] %s\n", (Status & 0x7FFFFFFF), StatusString);
+-#else
+-	Print(L": [%d]\n", (Status & 0x7FFFFFFF));
+-#endif
+-}
+-
+-/*
+- * You can control the verbosity of the driver output by setting the shell environment
+- * variable FS_LOGGING to one of the values defined in the FS_LOGLEVEL constants
+- */
+-VOID
+-SetLogging(VOID)
+-{
+-	EFI_STATUS Status;
+-	CHAR16 LogVar[4];
+-	UINTN i, LogVarSize = sizeof(LogVar);
+-
+-	Status = RT->GetVariable(L"FS_LOGGING", &ShellVariable, NULL, &LogVarSize, LogVar);
+-	if (Status == EFI_SUCCESS)
+-		LogLevel = Atoi(LogVar);
+-
+-	for (i=0; i<ARRAYSIZE(PrintTable); i++)
+-		*PrintTable[i] = (i < LogLevel)?(Print_t)Print:(Print_t)PrintNone;
+-
+-	PrintExtra(L"LogLevel = %d\n", LogLevel);
+-}
+--- a/src/missing.c
++++ b/src/missing.c
+@@ -23,120 +23,36 @@
+  */
+ 
+ #include "driver.h"
+-
+-/* Needed to avoid a LNK2043 error with EDK2/MSVC/IA32 */
+-#if !defined(__MAKEWITH_GNUEFI) && defined(_M_IX86)
+-#pragma comment(linker, "/INCLUDE:_MultS64x64")
+-#endif
+-
+-/* 
+- * Needed to avoid a linker error with MinGW when functions allocate a large amount of data from stack
+- * See https://www.metricpanda.com/rival-fortress-update-45-dealing-with-__chkstk-__chkstk_ms-when-cross-compiling-for-windows
+- */
+-#if defined(__MINGW32__)
+-#if defined(__MINGW64__)
+-void ___chkstk_ms(void)
+-#else
+-void __chkstk_ms(void)
+-#endif
+-{
+-    return;
+-}
+-#endif
+-
+-EFI_STATUS
+-PrintGuid(EFI_GUID *Guid)
+-{
+-	if (Guid == NULL) {
+-		Print(L"ERROR: PrintGuid called with a NULL value.\n");
+-		return EFI_INVALID_PARAMETER;
+-	}
+-
+-	Print(L"%08x-%04x-%04x-%02x%02x-%02x%02x%02x%02x%02x%02x\n",
+-		Guid->Data1,
+-		Guid->Data2,
+-		Guid->Data3,
+-		Guid->Data4[0],
+-		Guid->Data4[1],
+-		Guid->Data4[2],
+-		Guid->Data4[3],
+-		Guid->Data4[4],
+-		Guid->Data4[5],
+-		Guid->Data4[6],
+-		Guid->Data4[7]
+-	);
+-	return EFI_SUCCESS;
+-}
+-
+ INTN
+ CompareDevicePaths(CONST EFI_DEVICE_PATH* dp1, CONST EFI_DEVICE_PATH* dp2)
+ {
+ 	if (dp1 == NULL || dp2 == NULL)
+ 		return -1;
+-
+ 	while (1) {
+ 		UINT8 type1, type2;
+ 		UINT8 subtype1, subtype2;
+ 		UINT16 len1, len2;
+ 		INTN ret;
+-
+ 		type1 = DevicePathType(dp1);
+ 		type2 = DevicePathType(dp2);
+-
+ 		if (type1 != type2)
+ 			return (int)type2 - (int)type1;
+-
+ 		subtype1 = DevicePathSubType(dp1);
+ 		subtype2 = DevicePathSubType(dp2);
+-
+ 		if (subtype1 != subtype2)
+ 			return (int)subtype1 - (int)subtype2;
+-
+ 		len1 = DevicePathNodeLength(dp1);
+ 		len2 = DevicePathNodeLength(dp2);
+ 		if (len1 != len2)
+ 			return (int)len1 - (int)len2;
+-
+ 		ret = CompareMem(dp1, dp2, len1);
+ 		if (ret != 0)
+ 			return ret;
+-
+ 		if (IsDevicePathEnd(dp1))
+ 			break;
+-
+ 		dp1 = (EFI_DEVICE_PATH*)((char*)dp1 + len1);
+ 		dp2 = (EFI_DEVICE_PATH*)((char*)dp2 + len2);
+ 	}
+-
+ 	return 0;
+ }
+-
+-CHAR16*
+-StrDup(CONST CHAR16* Src)
+-{
+-	UINTN Size = StrSize(Src);
+-	CHAR16* Dest = AllocatePool(Size);
+-	if (Dest != NULL)
+-		CopyMem (Dest, (VOID*)Src, Size);
+-	return Dest;
+-}
+-
+-/* Convert a Device Path to a string. Must be freed with FreePool(). */
+-CHAR16 *
+-ToDevicePathString(CONST EFI_DEVICE_PATH* DevicePath)
+-{
+-	CHAR16* DevicePathString = NULL;
+-	EFI_STATUS Status;
+-	EFI_DEVICE_PATH_TO_TEXT_PROTOCOL* DevicePathToText;
+-
+-	Status = BS->LocateProtocol(&gEfiDevicePathToTextProtocolGuid, NULL, (VOID**)&DevicePathToText);
+-	if (Status == EFI_SUCCESS)
+-		DevicePathString = DevicePathToText->ConvertDevicePathToText(DevicePath, FALSE, FALSE);
+-	else
+-#if defined(_GNU_EFI)
+-		DevicePathString = DevicePathToStr((EFI_DEVICE_PATH *)DevicePath);
+-#else
+-		DevicePathString = StrDup(L"N/A (This platform is missing the DevicePathToText Protocol)");
+-#endif
+-	return DevicePathString;
+-}
++ 
+--- a/src/path.c
++++ b/src/path.c
+@@ -24,34 +24,26 @@
+ 
+ #include "driver.h"
+ 
+-/* copy src into dest converting the path to a relative one inside the current
+- * directory. dest must hold at least len bytes
+- */
+ 
+ #ifndef PATH_CHAR
+ #define PATH_CHAR '/'
+ #endif
+-
+ VOID CopyPathRelative(CHAR8 *dest, CHAR8 *src, INTN len)
+ {
+ 	CHAR8* o = dest;
+ 	CHAR8* p = src;
+-
+ 	*o = '\0';
+-
+ 	while(*p && *p == PATH_CHAR) ++p;
+ 	for(; len && *p;)
+ 	{
+ 		src = p;
+ 		while (*p && *p != PATH_CHAR) p++;
+ 		if (!*p) p = src+strlena(src);
+-
+-		/* . => skip */
++		 
+ 		if(p-src == 1 && *src == '.' )
+ 		{
+ 			if(*p) src = ++p;
+ 		}
+-		/* .. => pop one */
+ 		else if(p-src == 2 && *src == '.' && src[1] == '.')
+ 		{
+ 			if(o != dest)
+@@ -63,7 +55,7 @@
+ 				o = &dest[i];
+ 				if(*p) ++p;
+ 			}
+-			else /* nothing to pop */
++			else  
+ 				if(*p) ++p;
+ 		}
+ 		else
+--- a/src/this.c
++++ b/src/this.c
+@@ -19,78 +19,17 @@
+  *  along with this program.  If not, see <http://www.gnu.org/licenses/>.
+  */
+ 
+-#include "config.h"
+ #include "driver.h"
+-
+-// Uncomment the following to disable compression support for NTFS and HFS+
+-//#define DISABLE_COMPRESSION
+-
+-#if !defined(DRIVERNAME_STR)
+-#define DRIVERNAME_STR STRINGIFY(DRIVERNAME)
+-#endif
+-
+-CHAR16 *ShortDriverName = WIDEN(STRINGIFY(DRIVERNAME));
+-CHAR16 *FullDriverName = L"EfiFs " WIDEN(DRIVERNAME_STR)
+-		L" driver v" WIDEN(STRINGIFY(FS_DRIVER_VERSION_MAJOR)) L"."
+-		WIDEN(STRINGIFY(FS_DRIVER_VERSION_MINOR)) L" ("  WIDEN(PACKAGE_STRING) L")";
+-
+-// Setup generic function calls for grub_<module>_init and grub_<module>_exit
+-#define MAKE_FN_NAME(module, suffix) grub_ ## module ## _ ## suffix
+-#define GRUB_FS_CALL(module, suffix) MAKE_FN_NAME(module, suffix)
+-#define GRUB_DECLARE_MOD(module) \
+-	extern void GRUB_FS_CALL(module, init)(void); \
+-	extern void GRUB_FS_CALL(module, fini)(void)
+-
+-// Declare all the modules we may need to access
+-GRUB_DECLARE_MOD(DRIVERNAME);
+-#if defined(COMPRESSED_DRIVERNAME) && !defined(DISABLE_COMPRESSION)
+-GRUB_DECLARE_MOD(COMPRESSED_DRIVERNAME);
+-#endif
+-#if defined(EXTRAMODULE)
+-GRUB_DECLARE_MOD(EXTRAMODULE);
+-#endif
+-#if defined(EXTRAMODULE2)
+-GRUB_DECLARE_MOD(EXTRAMODULE2);
+-#endif
+-#if defined(EXTRAMODULE3)
+-GRUB_DECLARE_MOD(EXTRAMODULE3);
+-#endif
+-
+-GRUB_MOD_INIT GrubModuleInit[] = {
+-	GRUB_FS_CALL(DRIVERNAME, init),
+-#if defined(COMPRESSED_DRIVERNAME) && !defined(DISABLE_COMPRESSION)
+-	GRUB_FS_CALL(COMPRESSED_DRIVERNAME, init),
+-#endif
+-#if defined(EXTRAMODULE)
+-	GRUB_FS_CALL(EXTRAMODULE, init),
+-#endif
+-#if defined(EXTRAMODULE2)
+-	GRUB_FS_CALL(EXTRAMODULE2, init),
+-#endif
+-#if defined(EXTRAMODULE3)
+-	GRUB_FS_CALL(EXTRAMODULE3, init),
+-#endif
+-	NULL
+-};
+-
+-GRUB_MOD_EXIT GrubModuleExit[] = {
+-	GRUB_FS_CALL(DRIVERNAME, fini),
+-#if defined(COMPRESSED_DRIVERNAME) && !defined(DISABLE_COMPRESSION)
+-	GRUB_FS_CALL(COMPRESSED_DRIVERNAME, fini),
+-#endif
+-#if defined(EXTRAMODULE)
+-	GRUB_FS_CALL(EXTRAMODULE, fini),
+-#endif
+-#if defined(EXTRAMODULE2)
+-	GRUB_FS_CALL(EXTRAMODULE2, fini),
+-#endif
+-#if defined(EXTRAMODULE3)
+-	GRUB_FS_CALL(EXTRAMODULE3, fini),
+-#endif
+-	NULL
+-};
+-
+-#if defined(__MAKEWITH_GNUEFI)
+-// Designate the driver entrypoint
+-EFI_DRIVER_ENTRY_POINT(FSDriverInstall)
+-#endif
++CHAR16 *ShortDriverName = L"ntfs";
++CHAR16 *FullDriverName = L"EfiFs NTFS driver v1.13";
++extern void grub_ntfs_init(void);
++extern void grub_ntfs_fini(void);
++extern void grub_ntfscomp_init(void);
++extern void grub_ntfscomp_fini(void);
++GRUB_MOD_INIT GrubModuleInit[] = { grub_ntfs_init, grub_ntfscomp_init, NULL };
++GRUB_MOD_EXIT GrubModuleExit[] = { grub_ntfscomp_fini, grub_ntfs_fini, NULL };
++EFI_STATUS EFIAPI
++_entry(EFI_HANDLE image, EFI_SYSTEM_TABLE *system)
++{
++    return FSDriverInstall(image, system);
++}
+--- a/src/utf8.c
++++ b/src/utf8.c
+@@ -25,431 +25,104 @@
+ 
+ #include "driver.h"
+ 
+-/*
+- * Define this if you want to support UTF-16 in UCS-2
+- */
+-#define UTF16
+-
+-/*
+- * From RFC 2044:
+- *
+- * UCS-4 range (hex.)           UTF-8 octet sequence (binary)
+- * 0000 0000-0000 007F   0xxxxxxx
+- * 0000 0080-0000 07FF   110xxxxx 10xxxxxx
+- * 0000 0800-0000 FFFF   1110xxxx 10xxxxxx 10xxxxxx
+- * 0001 0000-001F FFFF   11110xxx 10xxxxxx 10xxxxxx 10xxxxxx
+- * 0020 0000-03FF FFFF   111110xx 10xxxxxx 10xxxxxx 10xxxxxx 10xxxxxx
+- * 0400 0000-7FFF FFFF   1111110x 10xxxxxx ... 10xxxxxx
+- */
+-
+-/*
+- * From http://www.imc.org/draft-hoffman-utf16
+- *
+- * For U on [0x00010000,0x0010FFFF]:  Let U' = U - 0x00010000
+- *
+- * U' = yyyyyyyyyyxxxxxxxxxx
+- * W1 = 110110yyyyyyyyyy
+- * W2 = 110111xxxxxxxxxx
+- */
+-
+-#ifdef IS_BIG_ENDIAN
+-#define L_0 0
+-#define L_1 1
+-#define L_2 2
+-#define L_3 3
+-#define H_0 0
+-#define H_1 1
+-#else
++
++
++
+ #define L_0 3
+ #define L_1 2
+ #define L_2 1
+ #define L_3 0
+ #define H_0 1
+ #define H_1 0
+-#endif
+-
+-#ifdef WITH_UCS4
+-/**
+- * Convert an UTF-8 string to and from UCS-4
+- *
+- * @v toUnicode         If TRUE, convert from UTF-8 to UCS-4, opposite otherwise
+- * @v inBuf             The input string
+- * @v inBufLen          The input string length, in BYTES
+- * @v outBuf            The output string
+- * @v maxOutBufLen      The size of the output buffer, in BYTES
+- * @v outBufLen         A pointer that returns the length of the output string, in BYTES
+- * @ret Boolean         TRUE if the conversion was successful. If the output buffer is
+- *                      too small, the function fails but return the required length in
+- *                      outBufLen.
+- */
++
+ static BOOLEAN
+-ConvertUcs4Utf8(BOOLEAN toUnicode, UINT8 *inBuf, UINTN inBufLen,
++ConvertUcs2Utf8(BOOLEAN toUnicode, UINT8 *inBuf, UINTN inBufLen,
+ 		UINT8 *outBuf, UINTN maxOutBufLen, UINTN *outBufLen)
+ {
+-	FS_ASSERT((UINTN *)NULL != outBufLen);
+-
++	if (outBufLen == NULL) return FALSE;
+ 	if( toUnicode ) {
+ 		UINTN i, len = 0;
+-
+ 		for( i = 0; i < inBufLen; ) {
+-			if( (inBuf[i] & 0x80) == 0x00 ) i += 1;
+-			else if( (inBuf[i] & 0xE0) == 0xC0 ) i += 2;
+-			else if( (inBuf[i] & 0xF0) == 0xE0 ) i += 3;
+-			else if( (inBuf[i] & 0xF8) == 0xF0 ) i += 4;
+-			else if( (inBuf[i] & 0xFC) == 0xF8 ) i += 5;
+-			else if( (inBuf[i] & 0xFE) == 0xFC ) i += 6;
+-			else return FALSE;
+-
+-			len += 4;
+-		}
+-
++			if( (inBuf[i] & 0x80) == 0x00 ) {
++				i += 1;
++				len += 2;
++			} else if( (inBuf[i] & 0xE0) == 0xC0 ) {
++				i += 2;
++				len += 2;
++			} else if( (inBuf[i] & 0xF0) == 0xE0 ) {
++				i += 3;
++				len += 2;
++			} else if( (inBuf[i] & 0xF8) == 0xF0 ) {
++				i += 4;
++				len += 4;
++				if( (inBuf[i] & 0x04) &&
++					((inBuf[i] & 0x03) || (inBuf[i+1] & 0x30)) ) {
++						return FALSE;
++				}
++			} else return FALSE;
++		}
+ 		if( len > maxOutBufLen ) {
+ 			*outBufLen = len;
+ 			return FALSE;
+ 		}
+-
+ 		len = 0;
+-
+ 		for( i = 0; i < inBufLen; ) {
+ 			if( (inBuf[i] & 0x80) == 0x00 ) {
+-				/* 0000 0000-0000 007F <- 0xxxxxx */
+-				/* 0abcdefg ->
+-				   00000000 00000000 00000000 0abcdefg */
+-
+-				outBuf[len+L_0] = 0x00;
+-				outBuf[len+L_1] = 0x00;
+-				outBuf[len+L_2] = 0x00;
+-				outBuf[len+L_3] = inBuf[i+0] & 0x7F;
+-
++				 
++				outBuf[len+H_0] = 0x00;
++				outBuf[len+H_1] = inBuf[i+0] & 0x7F;
+ 				i += 1;
++				len += 2;
+ 			} else if( (inBuf[i] & 0xE0) == 0xC0 ) {
+-
+ 				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0000 0080-0000 07FF <- 110xxxxx 10xxxxxx */
+-				/* 110abcde 10fghijk ->
+-				   00000000 00000000 00000abc defghijk */
+-
+-				outBuf[len+L_0] = 0x00;
+-				outBuf[len+L_1] = 0x00;
+-				outBuf[len+L_2] = ((inBuf[i+0] & 0x1C) >> 2);
+-				outBuf[len+L_3] = ((inBuf[i+0] & 0x03) << 6) | ((inBuf[i+1] & 0x3F) >> 0);
+-
++				 
++
++				outBuf[len+H_0] = ((inBuf[i+0] & 0x1C) >> 2);
++				outBuf[len+H_1] = ((inBuf[i+0] & 0x03) << 6) | ((inBuf[i+1] & 0x3F) >> 0);
+ 				i += 2;
++				len += 2;
+ 			} else if( (inBuf[i] & 0xF0) == 0xE0 ) {
+-
+ 				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+ 				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0000 0800-0000 FFFF <- 1110xxxx 10xxxxxx 10xxxxxx */
+-				/* 1110abcd 10efghij 10klmnop ->
+-				   00000000 00000000 abcdefgh ijklmnop */
+-
+-				outBuf[len+L_0] = 0x00;
+-				outBuf[len+L_1] = 0x00;
+-				outBuf[len+L_2] = ((inBuf[i+0] & 0x0F) << 4) | ((inBuf[i+1] & 0x3C) >> 2);
+-				outBuf[len+L_3] = ((inBuf[i+1] & 0x03) << 6) | ((inBuf[i+2] & 0x3F) >> 0);
+-
++				 
++
++				outBuf[len+H_0] = ((inBuf[i+0] & 0x0F) << 4) | ((inBuf[i+1] & 0x3C) >> 2);
++				outBuf[len+H_1] = ((inBuf[i+1] & 0x03) << 6) | ((inBuf[i+2] & 0x3F) >> 0);
+ 				i += 3;
++				len += 2;
+ 			} else if( (inBuf[i] & 0xF8) == 0xF0 ) {
+-
++				int abcde, BCDE;
+ 				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+ 				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+ 				if( (inBuf[i+3] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0001 0000-001F FFFF <- 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx */
+-				/* 11110abc 10defghi 10jklmno 10pqrstu ->
+-				   00000000 000abcde fghijklm nopqrstu */
+-
+-				outBuf[len+L_0] = 0x00;
+-				outBuf[len+L_1] = ((inBuf[i+0] & 0x07) << 2) | ((inBuf[i+1] & 0x30) >> 4);
+-				outBuf[len+L_2] = ((inBuf[i+1] & 0x0F) << 4) | ((inBuf[i+2] & 0x3C) >> 2);
+-				outBuf[len+L_3] = ((inBuf[i+2] & 0x03) << 6) | ((inBuf[i+3] & 0x3F) >> 0);
+-
+-				i += 4;
+-			} else if( (inBuf[i] & 0xFC) == 0xF8 ) {
+-
+-				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+3] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+4] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0020 0000-03FF FFFF <- 111110xx 10xxxxxx ... 10xxxxxx */
+-				/* 111110ab 10cdefgh 10ijklmn 10opqrst 10uvwxyz ->
+-				   000000ab cdefghij klmnopqr stuvwxyz */
+-
+-				outBuf[len+L_0] = inBuf[i+0] & 0x03;
+-				outBuf[len+L_1] = ((inBuf[i+1] & 0x3F) << 2) | ((inBuf[i+2] & 0x30) >> 4);
+-				outBuf[len+L_2] = ((inBuf[i+2] & 0x0F) << 4) | ((inBuf[i+3] & 0x3C) >> 2);
+-				outBuf[len+L_3] = ((inBuf[i+3] & 0x03) << 6) | ((inBuf[i+4] & 0x3F) >> 0);
+-
+-				i += 5;
+-			} else /* if( (inBuf[i] & 0xFE) == 0xFC ) */ {
+-
+-				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+3] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+4] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+5] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0400 0000-7FFF FFFF <- 1111110x 10xxxxxx ... 10xxxxxx */
+-				/* 1111110a 10bcdefg 10hijklm 10nopqrs 10tuvwxy 10zABCDE ->
+-				   0abcdefg hijklmno pqrstuvw xyzABCDE */
+-
+-				outBuf[len+L_0] = ((inBuf[i+0] & 0x01) << 6) | ((inBuf[i+1] & 0x3F) >> 0);
+-				outBuf[len+L_1] = ((inBuf[i+2] & 0x3F) << 2) | ((inBuf[i+3] & 0x30) >> 4);
+-				outBuf[len+L_2] = ((inBuf[i+3] & 0x0F) << 4) | ((inBuf[i+4] & 0x3C) >> 2);
+-				outBuf[len+L_3] = ((inBuf[i+4] & 0x03) << 6) | ((inBuf[i+5] & 0x3F) >> 0);
+-
+-				i += 6;
+-			}
+-
+-			len += 4;
+-		}
+-
+-		*outBufLen = len;
+-		return TRUE;
+-	} else {
+-		UINTN i, len = 0;
+-		FS_ASSERT((inBufLen % 4) == 0);
+-		if ((inBufLen % 4) != 0) {
+-			*outBufLen = 0;
+-			return FALSE;
+-		}
+-
+-		for( i = 0; i < inBufLen; i += 4 ) {
+-			if( inBuf[i+L_0] >= 0x04 ) len += 6;
+-			else if( (inBuf[i+L_0] > 0x00) || (inBuf[i+L_1] >= 0x20) ) len += 5;
+-			else if( inBuf[i+L_1] >= 0x01 ) len += 4;
+-			else if( inBuf[i+L_2] >= 0x08 ) len += 3;
+-			else if( (inBuf[i+L_2] > 0x00) || (inBuf[i+L_3] >= 0x80) ) len += 2;
+-			else len += 1;
+-		}
+-
+-		if( len > maxOutBufLen ) {
+-			*outBufLen = len;
+-			return FALSE;
+-		}
+-
+-		len = 0;
+-
+-		for( i = 0; i < inBufLen; i += 4 ) {
+-			if( inBuf[i+L_0] >= 0x04 ) {
+-				/* 0400 0000-7FFF FFFF -> 1111110x 10xxxxxx ... 10xxxxxx */
+-				/* 0abcdefg hijklmno pqrstuvw xyzABCDE ->
+-				   1111110a 10bcdefg 10hijklm 10nopqrs 10tuvwxy 10zABCDE */
+-
+-				outBuf[len+0] = 0xFC | ((inBuf[i+L_0] & 0x40) >> 6);
+-				outBuf[len+1] = 0x80 | ((inBuf[i+L_0] & 0x3F) >> 0);
+-				outBuf[len+2] = 0x80 | ((inBuf[i+L_1] & 0xFC) >> 2);
+-				outBuf[len+3] = 0x80 | ((inBuf[i+L_1] & 0x03) << 4)
+-					| ((inBuf[i+L_2] & 0xF0) >> 4);
+-				outBuf[len+4] = 0x80 | ((inBuf[i+L_2] & 0x0F) << 2)
+-					| ((inBuf[i+L_3] & 0xC0) >> 6);
+-				outBuf[len+5] = 0x80 | ((inBuf[i+L_3] & 0x3F) >> 0);
+-
+-				len += 6;
+-			} else if( (inBuf[i+L_0] > 0x00) || (inBuf[i+L_1] >= 0x20) ) {
+-				/* 0020 0000-03FF FFFF -> 111110xx 10xxxxxx ... 10xxxxxx */
+-				/* 000000ab cdefghij klmnopqr stuvwxyz ->
+-				   111110ab 10cdefgh 10ijklmn 10opqrst 10uvwxyz */
+-
+-				outBuf[len+0] = 0xF8 | ((inBuf[i+L_0] & 0x03) >> 0);
+-				outBuf[len+1] = 0x80 | ((inBuf[i+L_1] & 0xFC) >> 2);
+-				outBuf[len+2] = 0x80 | ((inBuf[i+L_1] & 0x03) << 4)
+-					| ((inBuf[i+L_2] & 0xF0) >> 4);
+-				outBuf[len+3] = 0x80 | ((inBuf[i+L_2] & 0x0F) << 2)
+-					| ((inBuf[i+L_3] & 0xC0) >> 6);
+-				outBuf[len+4] = 0x80 | ((inBuf[i+L_3] & 0x3F) >> 0);
+-
+-				len += 5;
+-			} else if( inBuf[i+L_1] >= 0x01 ) {
+-				/* 0001 0000-001F FFFF -> 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx */
+-				/* 00000000 000abcde fghijklm nopqrstu ->
+-				   11110abc 10defghi 10jklmno 10pqrstu */
+-
+-				outBuf[len+0] = 0xF0 | ((inBuf[i+L_1] & 0x1C) >> 2);
+-				outBuf[len+1] = 0x80 | ((inBuf[i+L_1] & 0x03) << 4)
+-					| ((inBuf[i+L_2] & 0xF0) >> 4);
+-				outBuf[len+2] = 0x80 | ((inBuf[i+L_2] & 0x0F) << 2)
+-					| ((inBuf[i+L_3] & 0xC0) >> 6);
+-				outBuf[len+3] = 0x80 | ((inBuf[i+L_3] & 0x3F) >> 0);
+-
+-				len += 4;
+-			} else if( inBuf[i+L_2] >= 0x08 ) {
+-				/* 0000 0800-0000 FFFF -> 1110xxxx 10xxxxxx 10xxxxxx */
+-				/* 00000000 00000000 abcdefgh ijklmnop ->
+-				   1110abcd 10efghij 10klmnop */
+-
+-				outBuf[len+0] = 0xE0 | ((inBuf[i+L_2] & 0xF0) >> 4);
+-				outBuf[len+1] = 0x80 | ((inBuf[i+L_2] & 0x0F) << 2)
+-					| ((inBuf[i+L_3] & 0xC0) >> 6);
+-				outBuf[len+2] = 0x80 | ((inBuf[i+L_3] & 0x3F) >> 0);
+-
+-				len += 3;
+-			} else if( (inBuf[i+L_2] > 0x00) || (inBuf[i+L_3] >= 0x80) ) {
+-				/* 0000 0080-0000 07FF -> 110xxxxx 10xxxxxx */
+-				/* 00000000 00000000 00000abc defghijk ->
+-				   110abcde 10fghijk */
+-
+-				outBuf[len+0] = 0xC0 | ((inBuf[i+L_2] & 0x07) << 2)
+-					| ((inBuf[i+L_3] & 0xC0) >> 6);
+-				outBuf[len+1] = 0x80 | ((inBuf[i+L_3] & 0x3F) >> 0);
+-
+-				len += 2;
+-			} else {
+-				/* 0000 0000-0000 007F -> 0xxxxxx */
+-				/* 00000000 00000000 00000000 0abcdefg ->
+-				   0abcdefg */
+-
+-				outBuf[len+0] = (inBuf[i+L_3] & 0x7F);
+-
+-				len += 1;
+-			}
+-		}
+-
+-		*outBufLen = len;
+-		return TRUE;
+-	}
+-}
+-#endif
+-
+-/**
+- * Convert an UTF-8 string to and from UCS-2/UTF-16
+- *
+- * @v toUnicode         If TRUE, convert from UTF-8 to UCS-2/UTF-16, opposite otherwise
+- * @v inBuf             The input string
+- * @v inBufLen          The input string length, in BYTES
+- * @v outBuf            The output string
+- * @v maxOutBufLen      The size of the output buffer, in BYTES
+- * @v outBufLen         A pointer that returns the length of the output string, in BYTES
+- * @ret Boolean         TRUE if the conversion was successful. If the output buffer is
+- *                      too small, the function fails but return the required length in
+- *                      outBufLen.
+- */
+-static BOOLEAN
+-ConvertUcs2Utf8(BOOLEAN toUnicode, UINT8 *inBuf, UINTN inBufLen,
+-		UINT8 *outBuf, UINTN maxOutBufLen, UINTN *outBufLen)
+-{
+-	FS_ASSERT((UINTN *)NULL != outBufLen);
+-
+-	if( toUnicode ) {
+-		UINTN i, len = 0;
+-
+-		for( i = 0; i < inBufLen; ) {
+-			if( (inBuf[i] & 0x80) == 0x00 ) {
+-				i += 1;
+-				len += 2;
+-			} else if( (inBuf[i] & 0xE0) == 0xC0 ) {
+-				i += 2;
+-				len += 2;
+-			} else if( (inBuf[i] & 0xF0) == 0xE0 ) {
+-				i += 3;
+-				len += 2;
+-#ifdef UTF16
+-			} else if( (inBuf[i] & 0xF8) == 0xF0 ) {
+-				i += 4;
+-				len += 4;
+-
+-				if( (inBuf[i] & 0x04) &&
+-					((inBuf[i] & 0x03) || (inBuf[i+1] & 0x30)) ) {
+-						/* Not representable as UTF16 */
+-						return FALSE;
+-				}
+-
+-#endif /* UTF16 */
+-			} else return FALSE;
+-		}
+-
+-		if( len > maxOutBufLen ) {
+-			*outBufLen = len;
+-			return FALSE;
+-		}
+-
+-		len = 0;
+-
+-		for( i = 0; i < inBufLen; ) {
+-			if( (inBuf[i] & 0x80) == 0x00 ) {
+-				/* 0000-007F <- 0xxxxxx */
+-				/* 0abcdefg -> 00000000 0abcdefg */
+-
+-				outBuf[len+H_0] = 0x00;
+-				outBuf[len+H_1] = inBuf[i+0] & 0x7F;
+-
+-				i += 1;
+-				len += 2;
+-			} else if( (inBuf[i] & 0xE0) == 0xC0 ) {
+-
+-				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0080-07FF <- 110xxxxx 10xxxxxx */
+-				/* 110abcde 10fghijk -> 00000abc defghijk */
+-
+-				outBuf[len+H_0] = ((inBuf[i+0] & 0x1C) >> 2);
+-				outBuf[len+H_1] = ((inBuf[i+0] & 0x03) << 6) | ((inBuf[i+1] & 0x3F) >> 0);
+-
+-				i += 2;
+-				len += 2;
+-			} else if( (inBuf[i] & 0xF0) == 0xE0 ) {
+-
+-				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0800-FFFF <- 1110xxxx 10xxxxxx 10xxxxxx */
+-				/* 1110abcd 10efghij 10klmnop -> abcdefgh ijklmnop */
+-
+-				outBuf[len+H_0] = ((inBuf[i+0] & 0x0F) << 4) | ((inBuf[i+1] & 0x3C) >> 2);
+-				outBuf[len+H_1] = ((inBuf[i+1] & 0x03) << 6) | ((inBuf[i+2] & 0x3F) >> 0);
+-
+-				i += 3;
+-				len += 2;
+-#ifdef UTF16
+-			} else if( (inBuf[i] & 0xF8) == 0xF0 ) {
+-				int abcde, BCDE;
+-
+-				if( (inBuf[i+1] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+2] & 0xC0) != 0x80 ) return FALSE;
+-				if( (inBuf[i+3] & 0xC0) != 0x80 ) return FALSE;
+-
+-				/* 0001 0000-001F FFFF <- 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx */
+-				/* 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx -> [D800-DBFF] [DC00-DFFF] */
+-
+-				/* 11110abc 10defghi 10jklmno 10pqrstu ->
+-				   { Let 0BCDE = abcde - 1 }
+-				   110110BC DEfghijk 110111lm nopqrstu */
++				 
++
+ 
+ 				abcde = ((inBuf[i+0] & 0x07) << 2) | ((inBuf[i+1] & 0x30) >> 4);
+ 				BCDE = abcde - 1;
+-
+-				FS_ASSERT(BCDE < 0x10); /* should have been caught above */
+-
++				if (BCDE >= 0x10) return FALSE;  
+ 				outBuf[len+0+H_0] = 0xD8 | ((BCDE & 0x0C) >> 2);
+ 				outBuf[len+0+H_1] = ((BCDE & 0x03) << 6)
+ 					| ((inBuf[i+1] & 0x0F) << 2)
+ 					| ((inBuf[i+2] & 0x30) >> 4);
+ 				outBuf[len+2+H_0] = 0xDC | ((inBuf[i+2] & 0x0C) >> 2);
+ 				outBuf[len+2+H_1] = ((inBuf[i+2] & 0x03) << 6) | ((inBuf[i+3] & 0x3F) >> 0);
+-
+ 				i += 4;
+ 				len += 4;
+-#endif /* UTF16 */
+ 			} else return FALSE;
+ 		}
+-
+ 		*outBufLen = len;
+ 		return TRUE;
+ 	} else {
+ 		UINTN i, len = 0;
+-		FS_ASSERT((inBufLen % 2) == 0);
++		if ((inBufLen % 2) != 0) return FALSE;
+ 		if ((inBufLen % 2) != 0) {
+ 			*outBufLen = 0;
+ 			return FALSE;
+ 		}
+-
+ 		for( i = 0; i < inBufLen; i += 2 ) {
+ 			if( (inBuf[i+H_0] == 0x00) && ((inBuf[i+H_0] & 0x80) == 0x00) ) len += 1;
+ 			else if( inBuf[i+H_0] < 0x08 ) len += 2;
+-#ifdef UTF16
+ 			else if( ((inBuf[i+0+H_0] & 0xDC) == 0xD8) ) {
+ 				if( ((inBuf[i+2+H_0] & 0xDC) == 0xDC) && ((inBufLen - i) > 2) ) {
+ 					i += 2;
+@@ -458,48 +131,31 @@
+ 					return FALSE;
+ 				}
+ 			}
+-#endif /* UTF16 */
+ 			else len += 3;
+ 		}
+-
+ 		if( len > maxOutBufLen ) {
+ 			*outBufLen = len;
+ 			return FALSE;
+ 		}
+-
+ 		len = 0;
+-
+ 		for( i = 0; i < inBufLen; i += 2 ) {
+ 			if( (inBuf[i+H_0] == 0x00) && ((inBuf[i+H_1] & 0x80) == 0x00) ) {
+-				/* 0000-007F -> 0xxxxxx */
+-				/* 00000000 0abcdefg -> 0abcdefg */
+-
++				 
+ 				outBuf[len] = inBuf[i+H_1] & 0x7F;
+-
+ 				len += 1;
+ 			} else if( inBuf[i+H_0] < 0x08 ) {
+-				/* 0080-07FF -> 110xxxxx 10xxxxxx */
+-				/* 00000abc defghijk -> 110abcde 10fghijk */
+-
++				 
+ 				outBuf[len+0] = 0xC0 | ((inBuf[i+H_0] & 0x07) << 2)
+ 					| ((inBuf[i+H_1] & 0xC0) >> 6);
+ 				outBuf[len+1] = 0x80 | ((inBuf[i+H_1] & 0x3F) >> 0);
+-
+-				len += 2;
+-#ifdef UTF16
++				len += 2;
+ 			} else if( (inBuf[i+H_0] & 0xDC) == 0xD8 ) {
+ 				int abcde, BCDE;
+-
+-				FS_ASSERT(((inBuf[i+2+H_0] & 0xDC) == 0xDC) && ((inBufLen - i) > 2));
+-
+-				/* D800-DBFF DC00-DFFF -> 11110xxx 10xxxxxx 10xxxxxx 10xxxxxx */
+-				/* 110110BC DEfghijk 110111lm nopqrstu ->
+-				   { Let abcde = BCDE + 1 }
+-				   11110abc 10defghi 10jklmno 10pqrstu */
++				if ((inBufLen - i <= 2) || ((inBuf[i+2+H_0] & 0xDC) != 0xDC)) return FALSE;
++				 
+ 
+ 				BCDE = ((inBuf[i+H_0] & 0x03) << 2) | ((inBuf[i+H_1] & 0xC0) >> 6);
+ 				abcde = BCDE + 1;
+-
+ 				outBuf[len+0] = 0xF0 | ((abcde & 0x1C) >> 2);
+ 				outBuf[len+1] = 0x80 | ((abcde & 0x03) << 4)
+ 					| ((inBuf[i+0+H_1] & 0x3C) >> 2);
+@@ -507,256 +163,73 @@
+ 					| ((inBuf[i+2+H_0] & 0x03) << 2)
+ 					| ((inBuf[i+2+H_1] & 0xC0) >> 6);
+ 				outBuf[len+3] = 0x80 | ((inBuf[i+2+H_1] & 0x3F) >> 0);
+-
+ 				i += 2;
+ 				len += 4;
+-#endif /* UTF16 */
+ 			} else {
+-				/* 0800-FFFF -> 1110xxxx 10xxxxxx 10xxxxxx */
+-				/* abcdefgh ijklmnop -> 1110abcd 10efghij 10klmnop */
+-
++				 
+ 				outBuf[len+0] = 0xE0 | ((inBuf[i+H_0] & 0xF0) >> 4);
+ 				outBuf[len+1] = 0x80 | ((inBuf[i+H_0] & 0x0F) << 2)
+ 					| ((inBuf[i+H_1] & 0xC0) >> 6);
+ 				outBuf[len+2] = 0x80 | ((inBuf[i+H_1] & 0x3F) >> 0);
+-
+ 				len += 3;
+ 			}
+ 		}
+-
+ 		*outBufLen = len;
+ 		return TRUE;
+ 	}
+ }
+ 
+-#ifdef WITH_ISO_8859_1
+-/**
+- * Convert an ISO-8859-1 string to UTF-8
+- *
+- * @v inBuf             The input string
+- * @v inBufLen          The input string length, in BYTES
+- * @v outBuf            The output string
+- * @v maxOutBufLen      The size of the output buffer, in BYTES
+- * @v outBufLen         A pointer that returns the length of the output string, in BYTES
+- * @ret Boolean         TRUE if the conversion was successful. If the output buffer is
+- *                      too small, the function fails but return the required length in
+- *                      outBufLen.
+- */
+-static BOOLEAN
+-ConvertIso88591ToUtf8(const UINT8 *inBuf, UINTN inBufLen,
+-		UINT8 *outBuf, UINTN maxOutBufLen, UINTN *outBufLen)
+-{
+-	UINTN i, len = 0;
+-
+-	FS_ASSERT((UINTN *)NULL != outBufLen);
+-
+-	for( i = 0; i < inBufLen; i++) {
+-		if( (inBuf[i] & 0x80) == 0x00 ) len += 1;
+-		else len += 2;
+-	}
+-
+-	if( len > maxOutBufLen ) {
+-		*outBufLen = len;
+-		return FALSE;
+-	}
+-
+-	len = 0;
+-
+-	for( i = 0; i < inBufLen; i++) {
+-		if( (inBuf[i] & 0x80) == 0x00 ) {
+-			/* 00-7F -> 0xxxxxxx */
+-			/* 0abcdefg -> 0abcdefg */
+-
+-			outBuf[len] = inBuf[i];
+-			len += 1;
+-		} else {
+-			/* 80-FF <- 110xxxxx 10xxxxxx */
+-			/* 00000000 abcdefgh -> 110000ab 10cdefgh */
+-
+-			outBuf[len+0] = 0xC0 | ((inBuf[i] & 0xC0) >> 6);
+-			outBuf[len+1] = 0x80 | ((inBuf[i] & 0x3F) >> 0);
+-
+-			len += 2;
+-		}
+-	}
+-
+-	*outBufLen = len;
+-	return TRUE;
+-}
+-#endif
+-
+-/**
+- * Convert an UTF-8 string to an allocated UTF-16 string
+- *
+- * @v Src               A NUL terminated UTF-8 input string
+- * @ret String          A NUL terminated UTF-16 string, or NULL on error.
+- *                      The caller needs to free the returned string.
+- */
+-CHAR16
+-*Utf8ToUtf16Alloc(CHAR8 *Src)
+-{
+-	UINTN DstLen = 0, SrcLen;
+-	static CHAR16 *Dst = NULL;
+-
+-	if (Src == NULL)
+-		return NULL;
+-
+-	SrcLen = strlena(Src);
+-
+-	if (SrcLen == 0) {	/* Empty string */
+-		Dst = (CHAR16 *)AllocateZeroPool(sizeof(CHAR16));
+-		return Dst;
+-	}
+-
+-	SrcLen++;	/* +1 for NUL terminator */
+-
+-	/* Failure is expected on this call, since we only want the length */
+-	ConvertUcs2Utf8(TRUE, (UINT8 *)Src, SrcLen, NULL, 0, &DstLen);
+-	if (DstLen == 0)
+-		goto error;
+-
+-	Dst = (CHAR16 *)AllocateZeroPool(DstLen);
+-	if (Dst == NULL)
+-		goto error;
+-
+-	if (!ConvertUcs2Utf8(TRUE, (UINT8 *)Src, SrcLen, (UINT8 *)Dst, DstLen, &DstLen))
+-		goto error;
+-
+-	return Dst;
+-
+-error:
+-	if (Dst != NULL)
+-		FreePool(Dst);
+-	return NULL;
+-}
+-
+-/**
+- * Convert an UTF-8 string to UTF-16, using a user supplied buffer
+- *
+- * @v Src               A NUL terminated UTF-8 input string
+- * @v Dst               A pointer an UTF-16 string buffer
+- * @v Len               The length of the target UTF-16 string buffer, in BYTES
+- * @ret Status          EFI_SUCCESS if the conversion was successful, and EFI error code on error
+- */
++
++
+ EFI_STATUS
+ Utf8ToUtf16NoAllocUpdateLen(CHAR8 *Src, CHAR16 *Dst, UINTN *Len)
+ {
+-	UINTN OrgLen = *Len, SrcLen;
+-
++	UINTN OrgLen, SrcLen;
+ 	if ((Src == NULL) || (Dst == NULL) || (Len == NULL))
+ 		return EFI_INVALID_PARAMETER;
+-
++	OrgLen = *Len;
+ 	SrcLen = strlena(Src);
+-
+-	if (SrcLen == 0) {	/* Empty string */
++	if (SrcLen == 0) {	 
+ 		*Len = sizeof(CHAR16);
+ 		if (*Len > OrgLen)
+ 			return EFI_BUFFER_TOO_SMALL;
+ 		*Dst = 0;
+ 		return EFI_SUCCESS;
+ 	}
+-
+-	SrcLen++;	/* +1 for NUL terminator */
+-
++	SrcLen++;	 
+ 	if (!ConvertUcs2Utf8(TRUE, (UINT8*)Src, SrcLen, (UINT8*)Dst, *Len, Len)) {
+ 		if (*Len > OrgLen)
+ 			return EFI_BUFFER_TOO_SMALL;
+ 		else
+ 			return EFI_NO_MAPPING;
+ 	}
+-
+ 	return EFI_SUCCESS;
+ }
+ 
+-EFI_STATUS
+-Utf8ToUtf16NoAlloc(CHAR8 *Src, CHAR16 *Dst, UINTN Len)
+-{
+-	UINTN TmpLen = Len;
+-	return Utf8ToUtf16NoAllocUpdateLen(Src, Dst, &TmpLen);
+-}
+-
+-/**
+- * Convert an UTF-16 string to an allocated UTF-8 string
+- *
+- * @v Src               A NUL terminated UTF-16 input string
+- * @ret String          A NUL terminated UTF-8 string, or NULL on error.
+- *                      The caller needs to free the returned string.
+- */
+-CHAR8
+-*Utf16ToUtf8Alloc(CHAR16 *Src)
+-{
+-	UINTN DstLen = 0, SrcLen;
+-	static CHAR8 *Dst = NULL;
+-
+-	if (Src == NULL)
+-		return NULL;
+-
+-	SrcLen = StrLen(Src);
+-
+-	if (SrcLen == 0) {	/* Empty string */
+-		Dst = (CHAR8 *)AllocateZeroPool(sizeof(CHAR8));
+-		return Dst;
+-	}
+-
+-	SrcLen++;	/* +1 for NUL terminator */
+-
+-	/* Failure is expected on this call, since we want the length */
+-	ConvertUcs2Utf8(FALSE, (UINT8 *)Src, SrcLen * sizeof(CHAR16), NULL, 0, &DstLen);
+-	if (DstLen == 0)
+-		goto error;
+-
+-	Dst = (CHAR8 *)AllocateZeroPool(DstLen);
+-	if (Dst == NULL)
+-		goto error;
+-
+-	if (!ConvertUcs2Utf8(FALSE, (UINT8 *)Src, SrcLen * sizeof(CHAR16), (UINT8 *)Dst, DstLen, &DstLen))
+-		goto error;
+-
+-	return Dst;
+-
+-error:
+-	if (Dst != NULL)
+-		FreePool(Dst);
+-	return NULL;
+-}
+-
+-/**
+- * Convert an UTF-16 string to UTF-8, using an user supplied buffer
+- *
+- * @v Src               A NUL terminated UTF-16 input string
+- * @v Dst               A pointer an UTF-8 string buffer
+- * @v Len               The length of the target UTF-8 string buffer, in BYTES
+- * @ret Status          EFI_SUCCESS if the conversion was successful, and EFI error code on error
+- */
++
++
+ EFI_STATUS
+ Utf16ToUtf8NoAllocUpdateLen(CHAR16 *Src, CHAR8 *Dst, UINTN *Len)
+ {
+-	UINTN OrgLen = *Len, SrcLen;
+-
++	UINTN OrgLen, SrcLen;
+ 	if ((Src == NULL) || (Dst == NULL) || (Len == NULL))
+ 		return EFI_INVALID_PARAMETER;
+-
++	OrgLen = *Len;
+ 	SrcLen = StrLen(Src);
+-
+-	if (SrcLen == 0) { /* Empty string */
++	if (SrcLen == 0) {  
+ 		*Len = sizeof(CHAR16);
+ 		if (*Len < OrgLen)
+ 			return EFI_BUFFER_TOO_SMALL;
+ 		*Dst = 0;
+ 		return EFI_SUCCESS;
+ 	}
+-
+-	SrcLen++;	/* +1 for NUL terminator */
+-
++	SrcLen++;	 
+ 	if (!ConvertUcs2Utf8(FALSE, (UINT8 *)Src, SrcLen * sizeof(CHAR16), (UINT8 *)Dst, *Len, Len))
+ 		return EFI_NO_MAPPING;
+-
+ 	if (*Len > OrgLen)
+ 		return EFI_BUFFER_TOO_SMALL;
+-
+ 	return EFI_SUCCESS;
+ }
+-
+ EFI_STATUS
+ Utf16ToUtf8NoAlloc(CHAR16 *Src, CHAR8 *Dst, UINTN Len)
+ {

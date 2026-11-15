@@ -84,3 +84,18 @@ TranslateGopBltToBmp (
   IN OUT VOID                           **BmpImage,
   IN OUT UINT32                         *BmpImageSize
   );
+
+/** Convert borrowed GOP pixels to a 24-bit BMP, allowing a wider source row.
+    PixelStride is measured in pixels and must be at least PixelWidth.
+    Buffer allocation and return values are the same as TranslateGopBltToBmp().
+**/
+RETURN_STATUS
+EFIAPI
+TranslateGopBltToBmpWithStride (
+  IN     CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL  *GopBlt,
+  IN     UINT32                             PixelHeight,
+  IN     UINT32                             PixelWidth,
+  IN     UINT32                             PixelStride,
+  IN OUT VOID                               **BmpImage,
+  IN OUT UINT32                             *BmpImageSize
+  );

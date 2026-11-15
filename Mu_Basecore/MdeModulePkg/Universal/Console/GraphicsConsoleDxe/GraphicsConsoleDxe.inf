@@ -31,8 +31,8 @@
 
 [Sources]
   ComponentName.c
-  LaffStd.c
   GraphicsConsole.c
+  GrayFont.c
   GraphicsConsole.h
 
 [Packages]
@@ -46,17 +46,14 @@
   UefiLib
   UefiDriverEntryPoint
   DebugLib
-  HiiLib
+  DxeServicesLib
   PcdLib
 
 [Protocols]
   gEfiDevicePathProtocolGuid                    ## TO_START
   gEfiSimpleTextOutProtocolGuid                 ## BY_START
   gEfiGraphicsOutputProtocolGuid                ## TO_START
-  gEfiHiiFontProtocolGuid                       ## TO_START
-  ## TO_START
-  ## NOTIFY
-  gEfiHiiDatabaseProtocolGuid
+  gConsoleFontProtocolGuid
 
 [Pcd]
   gEfiMdeModulePkgTokenSpaceGuid.PcdVideoHorizontalResolution ## SOMETIMES_CONSUMES

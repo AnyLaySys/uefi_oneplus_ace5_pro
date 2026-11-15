@@ -1,3 +1,7 @@
+  FILE FREEFORM = F5F219D3-7006-4648-AC8D-D61DFB7BC6AD {
+    SECTION RAW = Build/font-cache/Inconsolata.bin
+  }
+
   FILE FREEFORM = A1E235DE-E825-4591-9623-C43175811826 {
     SECTION UI = "SecParti.cfg"
     SECTION RAW = Binaries/hummer/RawFiles/SecParti.cfg

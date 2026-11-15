@@ -8,6 +8,7 @@
 
 [Sources]
   WindowsBoot.c
+  CpuSmbios.c
   Pcie0.c
   Pcie0.h
   Adsp.c
@@ -18,6 +19,7 @@
   PcBdsPkg/PcBdsPkg.dec
   QcomPkg/QcomPkg.dec
   hummerPkg/hummer.dec
+  SiliciumPkg/SiliciumPkg.dec
 
 [LibraryClasses]
   BaseLib
@@ -39,8 +41,10 @@
   WindowsKernelPatchLib
 
 [Protocols]
+  gEfiAcpiSdtProtocolGuid
+  gPreservedBootLogoProtocolGuid
   gEfiClockProtocolGuid
-  gEfiLoadedImageProtocolGuid
+  gEfiSmbiosProtocolGuid
   gEfiPartitionInfoProtocolGuid
   gEfiSimpleFileSystemProtocolGuid
   gEfiUsbMsdProtocolGuid

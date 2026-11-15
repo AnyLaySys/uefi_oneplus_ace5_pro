@@ -2,23 +2,46 @@
 
 #pragma pack (1)
 typedef struct {
+  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Header;
+  UINT32 Cache;
+} HUMMER_CLUSTER;
+
+typedef struct {
+  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Header;
+  UINT32 Caches[2];
+} HUMMER_CORE;
+
+typedef struct {
   EFI_ACPI_DESCRIPTION_HEADER Header;
   EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Package;
-  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Clusters[2];
-  EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR Cpus[8];
+  HUMMER_CLUSTER Clusters[2];
+  HUMMER_CORE Cpus[8];
+  EFI_ACPI_6_4_PPTT_STRUCTURE_CACHE Caches[18];
 } HUMMER_PPTT;
 #pragma pack ()
 
-#define HUMMER_CLUSTER { \
-  .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, \
-  .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR), \
-  .Parent = OFFSET_OF (HUMMER_PPTT, Package) }
+#define CACHE_OFFSET(Index) OFFSET_OF (HUMMER_PPTT, Caches[Index])
+#define CLUSTER(Index) { \
+  .Header = { .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, .Length = sizeof (HUMMER_CLUSTER), \
+    .Flags = { .IdenticalImplementation = 1 }, .Parent = OFFSET_OF (HUMMER_PPTT, Package), \
+    .NumberOfPrivateResources = 1 }, .Cache = CACHE_OFFSET (16 + Index) }
 
-#define HUMMER_CPU(Uid, Cluster) { \
-  .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, \
-  .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR), \
-  .Flags = { .AcpiProcessorIdValid = 1, .NodeIsALeaf = 1 }, \
-  .Parent = OFFSET_OF (HUMMER_PPTT, Clusters[Cluster]), .AcpiProcessorId = Uid }
+#define CPU(Uid, Cluster) { \
+  .Header = { .Type = EFI_ACPI_6_4_PPTT_TYPE_PROCESSOR, .Length = sizeof (HUMMER_CORE), \
+    .Flags = { .AcpiProcessorIdValid = 1, .NodeIsALeaf = 1 }, \
+    .Parent = OFFSET_OF (HUMMER_PPTT, Clusters[Cluster]), .AcpiProcessorId = Uid, \
+    .NumberOfPrivateResources = 2 }, .Caches = { CACHE_OFFSET (2 * Uid), CACHE_OFFSET (2 * Uid + 1) } }
+
+#define CACHE(Id, KiB, Ways, Kind) { \
+  .Type = EFI_ACPI_6_4_PPTT_TYPE_CACHE, .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_CACHE), \
+  .Flags = { .SizePropertyValid = 1, .NumberOfSetsValid = 1, .AssociativityValid = 1, \
+    .CacheTypeValid = 1, .LineSizeValid = 1, .CacheIdValid = 1 }, \
+  .Size = KiB * 1024, .NumberOfSets = KiB * 1024 / (64 * Ways), \
+  .Associativity = Ways, .Attributes = { .CacheType = Kind }, .LineSize = 64, .CacheId = Id }
+
+#define L1(Uid, KiB, Ways) \
+  CACHE (2 * Uid, 2 * KiB, Ways, EFI_ACPI_6_4_CACHE_ATTRIBUTES_CACHE_TYPE_INSTRUCTION), \
+  CACHE (2 * Uid + 1, KiB, Ways, EFI_ACPI_6_4_CACHE_ATTRIBUTES_CACHE_TYPE_DATA)
 
 HUMMER_PPTT Pptt = {
   .Header = HUMMER_ACPI_HEADER (
@@ -29,10 +52,17 @@ HUMMER_PPTT Pptt = {
     .Length = sizeof (EFI_ACPI_6_4_PPTT_STRUCTURE_PROCESSOR),
     .Flags = { .PhysicalPackage = 1 },
   },
-  .Clusters = { HUMMER_CLUSTER, HUMMER_CLUSTER },
+  .Clusters = { CLUSTER (0), CLUSTER (1) },
   .Cpus = {
-    HUMMER_CPU (0, 0), HUMMER_CPU (1, 0), HUMMER_CPU (2, 0), HUMMER_CPU (3, 0),
-    HUMMER_CPU (4, 0), HUMMER_CPU (5, 0), HUMMER_CPU (6, 1), HUMMER_CPU (7, 1),
+    CPU (0, 0), CPU (1, 0), CPU (2, 0), CPU (3, 0),
+    CPU (4, 0), CPU (5, 0), CPU (6, 1), CPU (7, 1),
+  },
+  .Caches = {
+    L1 (0, 64, 4), L1 (1, 64, 4), L1 (2, 64, 4),
+    L1 (3, 64, 4), L1 (4, 64, 4), L1 (5, 64, 4),
+    L1 (6, 96, 6), L1 (7, 96, 6),
+    CACHE (16, 12288, 12, EFI_ACPI_6_4_CACHE_ATTRIBUTES_CACHE_TYPE_UNIFIED),
+    CACHE (17, 12288, 12, EFI_ACPI_6_4_CACHE_ATTRIBUTES_CACHE_TYPE_UNIFIED),
   },
 };
 

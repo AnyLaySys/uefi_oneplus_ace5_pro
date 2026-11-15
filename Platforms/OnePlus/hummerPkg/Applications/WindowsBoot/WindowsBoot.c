@@ -16,22 +16,21 @@
 #include <Protocol/EFIUsbMsd.h>
 #include <Protocol/BlockIo.h>
 #include <Protocol/UsbFunctionIo.h>
-#include <Protocol/LoadedImage.h>
 #include <Protocol/PartitionInfo.h>
 #include <Protocol/SimpleFileSystem.h>
-#include <BootOptions.h>
+#include <Protocol/PreservedBootLogo.h>
 #include <LinuxPayload.h>
 #include "Pcie0.h"
 
 STATIC EFI_GUID mPayloadGuid = HUMMER_LINUX_PAYLOAD_HOB_GUID;
+VOID HummerUpdateCpuSmbios (EFI_HANDLE ImageHandle);
 
 STATIC
 EFI_STATUS
 TryBootFile (
   IN EFI_HANDLE ImageHandle,
   IN EFI_HANDLE FileSystemHandle,
-  IN CONST CHAR16 *FileName,
-  IN BOOLEAN PatchWindows
+  IN CONST CHAR16 *FileName
   )
 {
   EFI_STATUS Status;
@@ -40,6 +39,7 @@ TryBootFile (
   EFI_FILE_PROTOCOL *File;
   EFI_DEVICE_PATH_PROTOCOL *Path;
   EFI_HANDLE Child;
+  EFI_PRESERVED_BOOT_LOGO_PROTOCOL *Logo;
 
   Status = gBS->HandleProtocol (FileSystemHandle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&FileSystem);
   if (EFI_ERROR (Status)) {
@@ -64,15 +64,15 @@ TryBootFile (
   Status = gBS->LoadImage (TRUE, ImageHandle, Path, NULL, 0, &Child);
   FreePool (Path);
   if (!EFI_ERROR (Status)) {
-    if (PatchWindows) {
-      Status = InstallWindowsKernelPatch ();
-    }
+    Status = InstallWindowsKernelPatch ();
     if (!EFI_ERROR (Status)) {
+      HummerUpdateCpuSmbios (ImageHandle);
+      if (!EFI_ERROR (gBS->LocateProtocol (&gPreservedBootLogoProtocolGuid, NULL, (VOID **)&Logo))) {
+        Logo->Restore ();
+      }
       Status = gBS->StartImage (Child, NULL, NULL);
     }
-    if (PatchWindows) {
-      UninstallWindowsKernelPatch ();
-    }
+    UninstallWindowsKernelPatch ();
     gBS->UnloadImage (Child);
   }
   Root->Close (Root);
@@ -206,27 +206,10 @@ WindowsBootEntry (
   EFI_USBFN_IO_PROTOCOL *Usb;
   EFI_HANDLE *Handles;
   EFI_HANDLE *BlockHandles;
-  CONST CHAR16 *WindowsBootFiles[] = {
-    L"\\EFI\\Microsoft\\Boot\\bootmgfw.efi",
-    L"\\Windows\\Boot\\EFI\\bootmgfw.efi"
-  };
   UINTN Count;
   UINTN BlockCount;
   UINTN Index;
-  UINTN FileIndex;
-  UINTN LoaderCount;
-  CONST CHAR16 *LoaderName;
   EFI_DEVICE_PATH_PROTOCOL *DevicePath;
-  EFI_LOADED_IMAGE_PROTOCOL *LoadedImage;
-  BOOLEAN Generic;
-
-  Generic = FALSE;
-  LoadedImage = NULL;
-  Status = gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
-  if (!EFI_ERROR (Status) && LoadedImage->LoadOptionsSize == sizeof (HUMMER_GENERIC_BOOT_OPTION) &&
-      CompareMem (LoadedImage->LoadOptions, HUMMER_GENERIC_BOOT_OPTION, sizeof (HUMMER_GENERIC_BOOT_OPTION)) == 0) {
-    Generic = TRUE;
-  }
 
   Status = ReservePlatformMemory ();
   if (EFI_ERROR (Status)) {
@@ -274,26 +257,15 @@ WindowsBootEntry (
 
   Pcie0Initialize (Handles, Count);
   AdspInitialize (Handles, Count);
+  GpuInitialize ();
 
-  //
-  // The Windows kernel compatibility patch is applied on both paths: the
-  // generic path only differs in the loader file name, not in the patch.
-  // A single call site keeps the patch argument out of the compiler's reach.
-  //
   Status = EFI_NOT_FOUND;
   for (Index = 0; Index < Count; Index++) {
     DevicePath = DevicePathFromHandle (Handles[Index]);
     if (DevicePath == NULL || MsBootPolicyLibIsDevicePathUsb (DevicePath)) {
       continue;
     }
-    LoaderCount = Generic ? 1 : ARRAY_SIZE (WindowsBootFiles);
-    for (FileIndex = 0; FileIndex < LoaderCount; FileIndex++) {
-      LoaderName = Generic ? L"\\EFI\\BOOT\\BOOTAA64.EFI" : WindowsBootFiles[FileIndex];
-      Status     = TryBootFile (ImageHandle, Handles[Index], LoaderName, TRUE);
-      if (!EFI_ERROR (Status)) {
-        break;
-      }
-    }
+    Status = TryBootFile (ImageHandle, Handles[Index], L"\\EFI\\BOOT\\BOOTAA64.EFI");
     if (!EFI_ERROR (Status)) {
       break;
     }

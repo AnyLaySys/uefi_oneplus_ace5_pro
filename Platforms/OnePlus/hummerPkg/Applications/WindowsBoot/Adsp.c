@@ -8,13 +8,12 @@
 #include <Library/MsBootPolicyLib.h>
 #include <Library/PrintLib.h>
 #include <Library/UefiBootServicesTableLib.h>
+#include <Protocol/AcpiSystemDescriptionTable.h>
 #include <Protocol/EFIScm.h>
 #include <Protocol/scm_sip_interface.h>
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileInfo.h>
 #include "Pcie0.h"
-
-#define ADSP_FIRMWARE_DIR      L"\\ADSP\\"
 
 #define ADSP_PAS_ID            1
 #define ADSP_MEM_BASE          0x9EE00000
@@ -78,13 +77,13 @@ AdspOpenRoot (
 
 STATIC
 EFI_STATUS
-AdspReadFile (
+PilReadFile (
+  IN  EFI_FILE_PROTOCOL *Directory OPTIONAL,
   IN  CONST CHAR16  *Name,
   OUT UINT8         **Data,
   OUT UINTN         *Size
   )
 {
-  CHAR16             Path[64];
   EFI_FILE_PROTOCOL  *Root;
   EFI_FILE_PROTOCOL  *File;
   EFI_FILE_INFO      *Info;
@@ -92,14 +91,16 @@ AdspReadFile (
   UINTN              Index;
   EFI_STATUS         Status;
 
-  UnicodeSPrint (Path, sizeof (Path), L"%s%s", ADSP_FIRMWARE_DIR, Name);
   Status = EFI_NOT_FOUND;
-  for (Index = 0; Index < mAdspFileSystemCount; Index++) {
-    if (!AdspOpenRoot (Index, &Root)) {
+  for (Index = 0; Index < (Directory == NULL ? mAdspFileSystemCount : 1); Index++) {
+    Root = Directory;
+    if ((Directory == NULL) && !AdspOpenRoot (Index, &Root)) {
       continue;
     }
-    Status = Root->Open (Root, &File, Path, EFI_FILE_MODE_READ, 0);
-    Root->Close (Root);
+    Status = Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ, 0);
+    if (Directory == NULL) {
+      Root->Close (Root);
+    }
     if (EFI_ERROR (Status)) {
       continue;
     }
@@ -111,9 +112,13 @@ AdspReadFile (
       Status = (Info == NULL) ? EFI_OUT_OF_RESOURCES : File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, Info);
     }
     if (!EFI_ERROR (Status)) {
-      *Size = (UINTN)Info->FileSize;
+      InfoSize = (UINTN)Info->FileSize;
+      *Size = InfoSize;
       *Data = AllocatePool (MAX (*Size, 1));
       Status = (*Data == NULL) ? EFI_OUT_OF_RESOURCES : File->Read (File, Size, *Data);
+      if (!EFI_ERROR (Status) && (*Size != InfoSize)) {
+        Status = EFI_COMPROMISED_DATA;
+      }
       if (EFI_ERROR (Status) && (*Data != NULL)) {
         FreePool (*Data);
         *Data = NULL;
@@ -128,36 +133,143 @@ AdspReadFile (
   return Status;
 }
 
+// Driver Store names include an OS-generated hash. Select by the INF version,
+// and keep one directory open for both images and all of their segments.
 STATIC
-EFI_STATUS
-AdspScm4 (
-  IN  UINT32       SmcId,
-  IN  UINT32       ParamId,
-  IN  UINT64       Arg0,
-  IN  UINT64       Arg1,
-  IN  UINT64       Arg2,
-  IN  UINT64       Arg3,
-  OUT UINT64       *Result1 OPTIONAL
+UINT64
+AdspPackageVersion (
+  IN EFI_FILE_PROTOCOL *Package,
+  IN CONST CHAR16      *InfName
   )
 {
-  UINT64      Parameters[SCM_MAX_NUM_PARAMETERS];
-  UINT64      Results[SCM_MAX_NUM_RESULTS];
-  EFI_STATUS  Status;
+  UINT8 *Data;
+  UINTN Size;
+  UINTN Offset;
+  UINTN Part;
+  UINT32 Value;
+  UINT64 Version = 0;
 
-  ZeroMem (Parameters, sizeof (Parameters));
-  ZeroMem (Results, sizeof (Results));
-  Parameters[0] = Arg0;
-  Parameters[1] = Arg1;
-  Parameters[2] = Arg2;
-  Parameters[3] = Arg3;
-  Status        = mScm->ScmSipSysCall (mScm, SmcId, ParamId, Parameters, Results);
-  if (Result1 != NULL) {
-    *Result1 = Results[1];
+  if (EFI_ERROR (PilReadFile (Package, InfName, &Data, &Size))) {
+    return 0;
   }
-  if (!EFI_ERROR (Status) && (Results[1] != 0)) {
-    Status = EFI_DEVICE_ERROR;
+  for (Offset = 0; Offset + 9 < Size; Offset++) {
+    if ((Offset != 0) && (Data[Offset - 1] != '\n')) {
+      continue;
+    }
+    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
+      Offset++;
+    }
+    if ((Offset + 9 >= Size) || (AsciiStrnCmp ((CHAR8 *)Data + Offset, "DriverVer", 9) != 0)) {
+      continue;
+    }
+    Offset += 9;
+    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
+      Offset++;
+    }
+    if ((Offset == Size) || (Data[Offset++] != '=')) {
+      break;
+    }
+    while ((Offset < Size) && (Data[Offset] != ',') && (Data[Offset] != '\n')) {
+      Offset++;
+    }
+    if ((Offset == Size) || (Data[Offset++] != ',')) {
+      break;
+    }
+    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
+      Offset++;
+    }
+    for (Part = 0; Part < 4; Part++) {
+      if ((Offset == Size) || (Data[Offset] < '0') || (Data[Offset] > '9')) {
+        Version = 0;
+        break;
+      }
+      Value = 0;
+      while ((Offset < Size) && (Data[Offset] >= '0') && (Data[Offset] <= '9')) {
+        Value = Value * 10 + Data[Offset++] - '0';
+        if (Value > MAX_UINT16) {
+          break;
+        }
+      }
+      if ((Value > MAX_UINT16) || ((Part < 3) && ((Offset == Size) || (Data[Offset++] != '.')))) {
+        Version = 0;
+        break;
+      }
+      Version = (Version << 16) | Value;
+    }
+    if ((Offset < Size) && (Data[Offset] != '\r') && (Data[Offset] != '\n') &&
+        (Data[Offset] != ' ') && (Data[Offset] != '\t')) {
+      Version = 0;
+    }
+    break;
   }
-  return Status;
+  FreePool (Data);
+  return Version;
+}
+
+STATIC
+EFI_FILE_PROTOCOL *
+PilFindPackage (
+  IN CONST CHAR16        *Prefix,
+  IN CONST CHAR16        *InfName,
+  IN CONST CHAR16 *CONST *Required,
+  IN UINTN               RequiredCount
+  )
+{
+  EFI_FILE_PROTOCOL *Root;
+  EFI_FILE_PROTOCOL *Store;
+  EFI_FILE_PROTOCOL *Package;
+  EFI_FILE_PROTOCOL *File;
+  EFI_FILE_PROTOCOL *Best = NULL;
+  UINT8 Buffer[sizeof (EFI_FILE_INFO) + 512];
+  EFI_FILE_INFO *Info = (EFI_FILE_INFO *)Buffer;
+  UINTN Size;
+  UINTN Index;
+  UINTN Image;
+  UINT64 Version;
+  UINT64 BestVersion = 0;
+
+  for (Index = 0; Index < mAdspFileSystemCount; Index++) {
+    if (!AdspOpenRoot (Index, &Root)) {
+      continue;
+    }
+    if (EFI_ERROR (Root->Open (Root, &Store, L"\\Windows\\System32\\DriverStore\\FileRepository", EFI_FILE_MODE_READ, 0))) {
+      Root->Close (Root);
+      continue;
+    }
+    Root->Close (Root);
+    for (;;) {
+      Size = sizeof (Buffer);
+      if (EFI_ERROR (Store->Read (Store, &Size, Buffer)) || (Size == 0)) {
+        break;
+      }
+      if (!(Info->Attribute & EFI_FILE_DIRECTORY) || (StrnCmp (Info->FileName, Prefix, StrLen (Prefix)) != 0) ||
+          EFI_ERROR (Store->Open (Store, &Package, Info->FileName, EFI_FILE_MODE_READ, 0))) {
+        continue;
+      }
+      Version = AdspPackageVersion (Package, InfName);
+      if (Version > BestVersion) {
+        for (Image = 0; Image < RequiredCount; Image++) {
+          if (EFI_ERROR (Package->Open (Package, &File, (CHAR16 *)Required[Image], EFI_FILE_MODE_READ, 0))) {
+            break;
+          }
+          File->Close (File);
+        }
+        if (Image == RequiredCount) {
+          if (Best != NULL) {
+            Best->Close (Best);
+          }
+          Best = Package;
+          BestVersion = Version;
+          Package = NULL;
+        }
+      }
+      if (Package != NULL) {
+        Package->Close (Package);
+      }
+    }
+    Store->Close (Store);
+  }
+  return Best;
 }
 
 STATIC
@@ -170,7 +282,15 @@ AdspScm (
   IN  UINT64       Arg2
   )
 {
-  return AdspScm4 (SmcId, ParamId, Arg0, Arg1, Arg2, 0, NULL);
+  UINT64      Parameters[SCM_MAX_NUM_PARAMETERS] = { 0 };
+  UINT64      Results[SCM_MAX_NUM_RESULTS] = { 0 };
+  EFI_STATUS  Status;
+
+  Parameters[0] = Arg0;
+  Parameters[1] = Arg1;
+  Parameters[2] = Arg2;
+  Status        = mScm->ScmSipSysCall (mScm, SmcId, ParamId, Parameters, Results);
+  return EFI_ERROR (Status) || Results[1] == 0 ? Status : EFI_DEVICE_ERROR;
 }
 
 STATIC
@@ -198,13 +318,15 @@ AdspWriteRegion (
 
 STATIC
 EFI_STATUS
-AdspLoadImage (
+PilStartImage (
+  IN  EFI_FILE_PROTOCOL     *Directory OPTIONAL,
   IN  CONST CHAR16          *Name,
+  IN  BOOLEAN               Split,
   IN  UINT32                PasId,
   IN  UINTN                 MemBase,
   IN  UINTN                 MemSize,
-  OUT EFI_PHYSICAL_ADDRESS  *Metadata,
-  OUT UINTN                 *MetadataPages
+  OUT EFI_PHYSICAL_ADDRESS  *RetainedMetadata OPTIONAL,
+  OUT UINTN                 *RetainedPages OPTIONAL
   )
 {
   CHAR16                 FileName[32];
@@ -221,16 +343,25 @@ AdspLoadImage (
   UINT64                 Reloc;
   BOOLEAN                Relocate;
   UINTN                  MetaSize;
+  UINTN                  HashOffset;
+  EFI_PHYSICAL_ADDRESS   Metadata = 0;
+  UINTN                  Pages = 0;
   EFI_STATUS             Status;
 
-  UnicodeSPrint (FileName, sizeof (FileName), L"%s.mdt", Name);
-  Status = AdspReadFile (FileName, &Mdt, &MdtSize);
+  if (RetainedMetadata != NULL) {
+    *RetainedMetadata = 0;
+    *RetainedPages = 0;
+  }
+
+  UnicodeSPrint (FileName, sizeof (FileName), Split ? L"%s.mdt" : L"%s.mbn", Name);
+  Status = PilReadFile (Directory, FileName, &Mdt, &MdtSize);
   if (EFI_ERROR (Status)) {
     return Status;
   }
 
   Ehdr = (CONST ADSP_ELF32_EHDR *)Mdt;
-  if ((MdtSize < sizeof (*Ehdr)) || (ReadUnaligned32 ((CONST UINT32 *)Ehdr->Ident) != 0x464C457F) || (Ehdr->Ident[4] != 1) ||
+  if ((MdtSize < sizeof (*Ehdr)) || (ReadUnaligned32 ((CONST UINT32 *)Ehdr->Ident) != 0x464C457F) ||
+      (Ehdr->Ident[4] != 1) || (Ehdr->Ident[5] != 1) || ((Ehdr->PhOff & 3) != 0) ||
       (Ehdr->PhEntSize != sizeof (ADSP_ELF32_PHDR)) || (Ehdr->PhNum < 2) ||
       ((UINT64)Ehdr->PhOff + (UINT64)Ehdr->PhNum * sizeof (ADSP_ELF32_PHDR) > MdtSize))
   {
@@ -250,9 +381,15 @@ AdspLoadImage (
       break;
     }
   }
+  if ((Hash == 0) || (Phdr[0].FileSz < (UINT64)Ehdr->PhOff + (UINT64)Ehdr->PhNum * sizeof (*Phdr))) {
+    Status = EFI_COMPROMISED_DATA;
+    goto done;
+  }
   MetaSize = (UINTN)Phdr[0].FileSz + Phdr[Hash].FileSz;
-  if ((Hash == 0) || (MetaSize != MdtSize)) {
-    Status = EFI_UNSUPPORTED;
+  HashOffset = Split ? Phdr[0].FileSz : Phdr[Hash].Offset;
+  if ((HashOffset < Phdr[0].FileSz) || (HashOffset > MdtSize) ||
+      (Phdr[Hash].FileSz > MdtSize - HashOffset) || (Split && MetaSize != MdtSize)) {
+    Status = EFI_COMPROMISED_DATA;
     goto done;
   }
 
@@ -262,6 +399,11 @@ AdspLoadImage (
   for (Index = 0; Index < Ehdr->PhNum; Index++) {
     if ((Phdr[Index].Type != ELF_PT_LOAD) || ((Phdr[Index].Flags & MDT_TYPE_MASK) == MDT_TYPE_HASH) || (Phdr[Index].MemSz == 0)) {
       continue;
+    }
+    if ((Phdr[Index].FileSz > Phdr[Index].MemSz) || (Phdr[Index].PAddr & 3) != 0 ||
+        (!Split && ((Phdr[Index].Offset > MdtSize) || (Phdr[Index].FileSz > MdtSize - Phdr[Index].Offset)))) {
+      Status = EFI_COMPROMISED_DATA;
+      goto done;
     }
     if ((Phdr[Index].Flags & MDT_RELOCATABLE) != 0) {
       Relocate = TRUE;
@@ -275,21 +417,22 @@ AdspLoadImage (
     goto done;
   }
 
-  *MetadataPages = EFI_SIZE_TO_PAGES (MdtSize);
-  *Metadata      = 0xFFFFFFFF;
-  Status         = gBS->AllocatePages (AllocateMaxAddress, EfiBootServicesData, *MetadataPages, Metadata);
+  Pages    = EFI_SIZE_TO_PAGES (MetaSize);
+  Metadata = 0xFFFFFFFF;
+  Status   = gBS->AllocatePages (AllocateMaxAddress, EfiBootServicesData, Pages, &Metadata);
   if (EFI_ERROR (Status)) {
-    *MetadataPages = 0;
+    Pages = 0;
     goto done;
   }
-  CopyMem ((VOID *)(UINTN)*Metadata, Mdt, MdtSize);
-  WriteBackDataCacheRange ((VOID *)(UINTN)*Metadata, MdtSize);
+  CopyMem ((VOID *)(UINTN)Metadata, Mdt, Phdr[0].FileSz);
+  CopyMem ((UINT8 *)(UINTN)Metadata + Phdr[0].FileSz, Mdt + HashOffset, Phdr[Hash].FileSz);
+  WriteBackDataCacheRange ((VOID *)(UINTN)Metadata, MetaSize);
 
   Status = AdspScm (
              TZ_PIL_INIT_ID,
              TZ_PIL_INIT_ID_PARAM_ID,
              PasId,
-             *Metadata,
+             Metadata,
              0
              );
   if (EFI_ERROR (Status)) {
@@ -306,31 +449,40 @@ AdspLoadImage (
     if ((Phdr[Index].Type != ELF_PT_LOAD) || ((Phdr[Index].Flags & MDT_TYPE_MASK) == MDT_TYPE_HASH) || (Phdr[Index].MemSz == 0)) {
       continue;
     }
-    if ((Phdr[Index].FileSz > Phdr[Index].MemSz) || ((Phdr[Index].PAddr & 3) != 0)) {
-      Status = EFI_COMPROMISED_DATA;
-      goto done;
-    }
     Segment     = NULL;
     SegmentSize = 0;
     if (Phdr[Index].FileSz != 0) {
-      UnicodeSPrint (FileName, sizeof (FileName), L"%s.b%02u", Name, (UINT32)Index);
-      Status = AdspReadFile (FileName, &Segment, &SegmentSize);
-      if (EFI_ERROR (Status) || (SegmentSize != Phdr[Index].FileSz)) {
-        if (Segment != NULL) {
-          FreePool (Segment);
+      if (Split) {
+        UnicodeSPrint (FileName, sizeof (FileName), L"%s.b%02u", Name, (UINT32)Index);
+        Status = PilReadFile (Directory, FileName, &Segment, &SegmentSize);
+        if (EFI_ERROR (Status) || (SegmentSize != Phdr[Index].FileSz)) {
+          if (Segment != NULL) {
+            FreePool (Segment);
+          }
+          Status = EFI_ERROR (Status) ? Status : EFI_COMPROMISED_DATA;
+          goto done;
         }
-        Status = EFI_ERROR (Status) ? Status : EFI_COMPROMISED_DATA;
-        goto done;
+      } else {
+        Segment = Mdt + Phdr[Index].Offset;
+        SegmentSize = Phdr[Index].FileSz;
       }
     }
     AdspWriteRegion (MemBase + (UINTN)(Phdr[Index].PAddr - Reloc), Segment, SegmentSize, Phdr[Index].MemSz);
-    if (Segment != NULL) {
+    if (Split && Segment != NULL) {
       FreePool (Segment);
     }
   }
-  Status = EFI_SUCCESS;
+  Status = AdspScm (TZ_PIL_AUTH_RESET_ID, TZ_PIL_AUTH_RESET_ID_PARAM_ID, PasId, 0, 0);
 
 done:
+  if (!EFI_ERROR (Status) && RetainedMetadata != NULL) {
+    *RetainedMetadata = Metadata;
+    *RetainedPages = Pages;
+    Pages = 0;
+  }
+  if (Pages != 0) {
+    gBS->FreePages (Metadata, Pages);
+  }
   FreePool (Mdt);
   return Status;
 }
@@ -370,21 +522,28 @@ AdspInitialize (
   IN UINTN       FileSystemCount
   )
 {
-  EFI_PHYSICAL_ADDRESS  DtbMetadata;
-  EFI_PHYSICAL_ADDRESS  Metadata;
-  UINTN                 DtbPages;
-  UINTN                 Pages;
   UINT32                Step;
   EFI_STATUS            Status;
+  EFI_FILE_PROTOCOL     *Directory;
+  EFI_FILE_PROTOCOL     *Package;
+  EFI_PHYSICAL_ADDRESS  Metadata[2] = { 0 };
+  UINTN                 Pages[2] = { 0 };
+  STATIC CONST CHAR16 *CONST Required[] = { L"ADSP\\adsp.mdt", L"ADSP\\adsp_dtb.mdt" };
 
   mAdspFileSystems     = FileSystems;
   mAdspFileSystemCount = FileSystemCount;
-  DtbPages             = 0;
-  Pages                = 0;
-
   Status = gBS->LocateProtocol (&gQcomScmProtocolGuid, NULL, (VOID **)&mScm);
   if (EFI_ERROR (Status)) {
-    goto done;
+    return Status;
+  }
+  Package = PilFindPackage (L"sia9177.inf_arm64_", L"sia9177.inf", Required, ARRAY_SIZE (Required));
+  if (Package == NULL) {
+    return EFI_NOT_FOUND;
+  }
+  Status = Package->Open (Package, &Directory, L"ADSP", EFI_FILE_MODE_READ, 0);
+  Package->Close (Package);
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
 
   Step = QmpOpen ();
@@ -393,30 +552,79 @@ AdspInitialize (
   }
   AdspVoteRail ("lcx.lvl");
   AdspVoteRail ("lmx.lvl");
-  AdspScm (TZ_PIL_IS_SUBSYS_SUPPORTED_ID, TZ_PIL_IS_SUBSYS_SUPPORTED_ID_PARAM_ID, ADSP_DTB_PAS_ID, 0, 0);
-  AdspScm (TZ_PIL_IS_SUBSYS_SUPPORTED_ID, TZ_PIL_IS_SUBSYS_SUPPORTED_ID_PARAM_ID, ADSP_PAS_ID, 0, 0);
+  Status = PilStartImage (Directory, L"adsp_dtb", TRUE, ADSP_DTB_PAS_ID, ADSP_DTB_MEM_BASE, ADSP_DTB_MEM_SIZE, &Metadata[0], &Pages[0]);
+  if (!EFI_ERROR (Status)) {
+    Status = PilStartImage (Directory, L"adsp", TRUE, ADSP_PAS_ID, ADSP_MEM_BASE, ADSP_MEM_SIZE, &Metadata[1], &Pages[1]);
+  }
+  for (UINTN Image = 0; Image < ARRAY_SIZE (Pages); Image++) {
+    if (Pages[Image] != 0) {
+      gBS->FreePages (Metadata[Image], Pages[Image]);
+    }
+  }
+  Directory->Close (Directory);
+  return Status;
+}
 
-  Status = AdspLoadImage (L"adsp_dtb", ADSP_DTB_PAS_ID, ADSP_DTB_MEM_BASE, ADSP_DTB_MEM_SIZE, &DtbMetadata, &DtbPages);
-  if (EFI_ERROR (Status)) {
-    goto done;
-  }
-  Status = AdspScm (TZ_PIL_AUTH_RESET_ID, TZ_PIL_AUTH_RESET_ID_PARAM_ID, ADSP_DTB_PAS_ID, 0, 0);
-  if (EFI_ERROR (Status)) {
-    goto done;
-  }
+EFI_STATUS
+GpuInitialize (
+  VOID
+  )
+{
+  EFI_ACPI_SDT_PROTOCOL  *Sdt;
+  EFI_ACPI_SDT_HEADER    *Table;
+  EFI_ACPI_TABLE_VERSION Version;
+  EFI_ACPI_HANDLE       Root = NULL;
+  EFI_ACPI_HANDLE       Name = NULL;
+  EFI_ACPI_DATA_TYPE    Type;
+  CONST VOID            *Data;
+  UINTN                 Size;
+  UINTN                 Index;
+  UINTN                 Key;
+  UINT8                 Ready = 1;
+  EFI_STATUS            Status;
+  EFI_STATUS            CloseStatus;
+  EFI_FILE_PROTOCOL     *Package;
+  STATIC CONST CHAR16 *CONST Required[] = { L"gen80000_zap.mbn" };
 
-  Status = AdspLoadImage (L"adsp", ADSP_PAS_ID, ADSP_MEM_BASE, ADSP_MEM_SIZE, &Metadata, &Pages);
+  Status = gBS->LocateProtocol (&gEfiAcpiSdtProtocolGuid, NULL, (VOID **)&Sdt);
   if (EFI_ERROR (Status)) {
-    goto done;
+    return Status;
   }
-  Status = AdspScm (TZ_PIL_AUTH_RESET_ID, TZ_PIL_AUTH_RESET_ID_PARAM_ID, ADSP_PAS_ID, 0, 0);
-
-done:
-  if (Pages != 0) {
-    gBS->FreePages (Metadata, Pages);
+  for (Index = 0; !EFI_ERROR (Status = Sdt->GetAcpiTable (Index, &Table, &Version, &Key)); Index++) {
+    if (Table->Signature == SIGNATURE_32 ('D', 'S', 'D', 'T')) {
+      Status = Sdt->OpenSdt (Key, &Root);
+      break;
+    }
   }
-  if (DtbPages != 0) {
-    gBS->FreePages (DtbMetadata, DtbPages);
+  if (!EFI_ERROR (Status)) {
+    Status = Sdt->FindPath (Root, "\\_SB_.GPU0.ZPRD", &Name);
+  }
+  if (!EFI_ERROR (Status)) {
+    Status = Name == NULL ? EFI_NOT_FOUND : Sdt->GetOption (Name, 2, &Type, &Data, &Size);
+  }
+  if (!EFI_ERROR (Status)) {
+    if (Type != EFI_ACPI_DATA_TYPE_CHILD || Size != 1 || *(CONST UINT8 *)Data > 1) {
+      Status = EFI_COMPROMISED_DATA;
+    } else if (*(CONST UINT8 *)Data == 0) {
+      Package = PilFindPackage (L"a830_native.inf_arm64_", L"a830_native.inf", Required, ARRAY_SIZE (Required));
+      Status = mScm == NULL ? EFI_NOT_READY : Package == NULL ? EFI_NOT_FOUND :
+        PilStartImage (Package, L"gen80000_zap", FALSE, 13, 0x9B09A000, 0x2000, NULL, NULL);
+      if (Package != NULL) {
+        Package->Close (Package);
+      }
+      if (!EFI_ERROR (Status)) {
+        Status = Sdt->SetOption (Name, 2, &Ready, sizeof (Ready));
+      }
+    }
+  }
+  if (Name != NULL) {
+    CloseStatus = Sdt->Close (Name);
+    if (!EFI_ERROR (Status)) {
+      Status = CloseStatus;
+    }
+  }
+  if (Root != NULL) {
+    Sdt->Close (Root);
   }
   return Status;
 }

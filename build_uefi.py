@@ -465,6 +465,9 @@ def main ():
         sys.exit (1)
 
     # Compile Device UEFI
+    if subprocess.run ([sys.executable, str (RESOURCE_SCRIPTS_PATH / "build_font.py")]).returncode != 0:
+        sys.exit (1)
+
     if not compile_uefi (ctx, fd_config, device_script_path):
         sys.exit (1)
 

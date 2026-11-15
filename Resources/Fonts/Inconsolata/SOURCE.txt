@@ -1,0 +1,5 @@
+Inconsolata Regular
+Source: https://android.googlesource.com/platform/bootable/recovery/+/refs/heads/main/fonts/
+File: 12x22.png
+Only the normal-weight row is used.
+The firmware contains pre-generated 8-bit grayscale glyphs; no TTF is used.

@@ -24,6 +24,7 @@
   MemoryMapHelperLib
   BaseMemoryLib
   PcdLib
+  UefiLib
 
 [FixedPcd]
   gSiliciumPkgTokenSpaceGuid.PcdFrameBufferWidth
@@ -33,6 +34,7 @@
 [Protocols]
   gEfiGraphicsOutputProtocolGuid
   gEfiDevicePathProtocolGuid
+  gPreservedBootLogoProtocolGuid
 
 [Depex]
   TRUE

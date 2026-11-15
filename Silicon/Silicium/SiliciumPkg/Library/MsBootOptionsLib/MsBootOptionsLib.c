@@ -15,6 +15,9 @@
 
 #include <Protocol/FirmwareVolume2.h>
 #include <Protocol/LoadedImage.h>
+#include <BootOptions.h>
+
+STATIC EFI_GUID mGeneralBootGuid = HUMMER_GENERAL_BOOT_FILE_GUID;
 
 EFI_STATUS
 BuildFwLoadOption (
@@ -167,7 +170,7 @@ CreateFvBootOption (
 }
 
 STATIC
-UINTN
+VOID
 RegisterFvBootOption (
   IN EFI_GUID *FileGuid,
   IN CHAR16   *Description,
@@ -175,20 +178,17 @@ RegisterFvBootOption (
   IN UINT8    *OptionalData, 
   IN UINT32    OptionalDataSize)
 {
-  EFI_STATUS                    Status          = EFI_SUCCESS;
-  EFI_BOOT_MANAGER_LOAD_OPTION *BootOptions     = NULL;
-  EFI_BOOT_MANAGER_LOAD_OPTION  NewOption       = {0};
-  UINTN                         OptionIndex     = 0;
+  EFI_STATUS                    Status;
+  EFI_BOOT_MANAGER_LOAD_OPTION *BootOptions;
+  EFI_BOOT_MANAGER_LOAD_OPTION  NewOption;
+  UINTN                         OptionIndex;
   UINTN                         BootOptionCount = 0;
-
-  // Set Dummy Option Number
-  NewOption.OptionNumber = LoadOptionNumberUnassigned;
 
   // Create a New FV Boot Option
   Status = CreateFvBootOption (FileGuid, Description, &NewOption, Attributes, OptionalData, OptionalDataSize);
   if (EFI_ERROR (Status)) {
     DEBUG ((EFI_D_ERROR, "%a: Failed to Create a New FV Boot Option! Status = %r\n", __FUNCTION__, Status));
-    return Status;
+    return;
   }
 
   // Get Boot Load Options
@@ -215,23 +215,12 @@ RegisterFvBootOption (
     Status = EfiBootManagerAddLoadOptionVariable (&NewOption, (UINTN)-1);
     if (EFI_ERROR (Status)) {
       DEBUG ((EFI_D_ERROR, "%a: Failed to Add New Boot Load Option Variable! Status = %r\n", __FUNCTION__, Status));
-
-      // Free Buffers
-      EfiBootManagerFreeLoadOption  (&NewOption);
-      EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
-
-      return Status;
     }
-  } else {
-    // Update Boot Option Number
-    NewOption.OptionNumber = BootOptions[OptionIndex].OptionNumber;
   }
 
   // Free Buffers
   EfiBootManagerFreeLoadOption  (&NewOption);
   EfiBootManagerFreeLoadOptions (BootOptions, BootOptionCount);
-
-  return NewOption.OptionNumber;
 }
 
 VOID
@@ -252,8 +241,9 @@ MsBootOptionsLibRegisterDefaultBootOptions ()
   }
 
   // Register Default Boot Options
-  RegisterFvBootOption (&gMsBootPolicyFileGuid, L"USB Storage", LOAD_OPTION_ACTIVE, (UINT8 *)"USB", sizeof ("USB"));
-  RegisterFvBootOption (FixedPcdGetPtr (PcdUfpLoaderFile), L"FFU Mode", LOAD_OPTION_ACTIVE, NULL, 0);
+  RegisterFvBootOption (&mGeneralBootGuid, L"General", LOAD_OPTION_ACTIVE | LOAD_OPTION_HIDDEN, NULL, 0);
+  RegisterFvBootOption (&gMsBootPolicyFileGuid, L"USB", LOAD_OPTION_ACTIVE, (UINT8 *)"USB", sizeof ("USB"));
+  RegisterFvBootOption (FixedPcdGetPtr (PcdUfpLoaderFile), L"FFU", LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP, NULL, 0);
 }
 
 EFI_BOOT_MANAGER_LOAD_OPTION*

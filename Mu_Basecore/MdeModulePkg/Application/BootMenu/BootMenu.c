@@ -8,14 +8,17 @@ SPDX-License-Identifier: BSD-2-Clause-Patent
 
 #include <Library/UefiRuntimeServicesTableLib.h>
 #include <BootOptions.h>
+#include <Library/ConsoleFont.h>
 
 #include "BootMenu.h"
 
 EFI_HII_HANDLE  gStringPackHandle;
+STATIC CONSOLE_FONT_PROTOCOL *mMenuFont;
+STATIC EFI_GRAPHICS_OUTPUT_PROTOCOL *mMenuGop;
 
 STATIC EFI_GUID  mLinuxBootGuid   = HUMMER_LINUX_BOOT_FILE_GUID;
-STATIC EFI_GUID  mWindowsBootGuid = HUMMER_WINDOWS_BOOT_FILE_GUID;
-STATIC EFI_GUID  mGenericBootGuid = HUMMER_WINDOWS_BOOT_FILE_GUID;
+STATIC EFI_GUID  mGeneralBootGuid = HUMMER_GENERAL_BOOT_FILE_GUID;
+STATIC EFI_GUID  mInternalMenuGuid = HUMMER_INTERNAL_MENU_FILE_GUID;
 
 BOOLEAN  mModeInitialized = FALSE;
 BOOLEAN  mInternalStorageMenu = FALSE;
@@ -48,61 +51,35 @@ UINT32  mSetupVerticalResolution   = 0;
 **/
 UINTN
 PrintStringAt (
-  IN UINTN   Column,
-  IN UINTN   Row,
-  IN CHAR16  *String
+  IN UINTN Column,
+  IN UINTN Row,
+  IN CHAR16 *String,
+  IN UINTN CenterColumns
   )
 {
-  UINTN       ScreenWidth;
-  UINTN       ScreenRows;
-  CHAR16      *TurncateString;
-  EFI_STATUS  Status;
-  UINTN       ShowingLength;
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Foreground = {0};
+  EFI_GRAPHICS_OUTPUT_BLT_PIXEL Background = {0};
+  UINTN Columns;
+  UINTN Rows;
+  UINTN Length;
+  UINTN X;
+  UINTN Y;
+  UINTN Attribute = gST->ConOut->Mode->Attribute;
 
-  gST->ConOut->SetCursorPosition (gST->ConOut, Column, Row);
-
-  gST->ConOut->QueryMode (
-                 gST->ConOut,
-                 gST->ConOut->Mode->Mode,
-                 &ScreenWidth,
-                 &ScreenRows
-                 );
-
-  if ((Column > (ScreenWidth - 1)) || (Row > (ScreenRows - 1))) {
+  if (String == NULL || (Length = StrLen (String)) == 0 ||
+      EFI_ERROR (gST->ConOut->QueryMode (gST->ConOut, gST->ConOut->Mode->Mode, &Columns, &Rows)) ||
+      Column >= Columns || Row >= Rows) {
     return 0;
   }
-
-  if ((StrLen (String) + Column) > (ScreenWidth - 1)) {
-    //
-    // |      - ScreenWidth -       |
-    // ...Column.....................
-    // TurncateString length should leave one character for draw box and
-    // require one character for string end.
-    //
-    ShowingLength  = ScreenWidth - Column - 1;
-    TurncateString = AllocatePool ((ShowingLength + 1) * sizeof (CHAR16));
-
-    if (TurncateString == NULL) {
-      return 0;
-    }
-
-    Status = StrnCpyS (TurncateString, ShowingLength + 1, String, ShowingLength - 3);
-
-    if (EFI_ERROR (Status)) {
-      FreePool (TurncateString);
-      return 0;
-    }
-
-    *(TurncateString + ShowingLength - 3) = L'.';
-    *(TurncateString + ShowingLength - 2) = L'.';
-    *(TurncateString + ShowingLength - 1) = L'.';
-    *(TurncateString + ShowingLength)     = L'\0';
-    ShowingLength                         = Print (L"%s", TurncateString);
-    FreePool (TurncateString);
-    return ShowingLength;
-  } else {
-    return Print (L"%s", String);
+  Length = MIN (Length, Columns - Column);
+  X = (mMenuGop->Mode->Info->HorizontalResolution - Columns * CONSOLE_FONT_WIDTH) / 2 + Column * CONSOLE_FONT_WIDTH;
+  Y = (mMenuGop->Mode->Info->VerticalResolution - Rows * CONSOLE_FONT_HEIGHT) / 2 + Row * CONSOLE_FONT_HEIGHT;
+  if (CenterColumns > Length) {
+    X += (CenterColumns - Length) * CONSOLE_FONT_WIDTH / 2;
   }
+  Foreground.Red = Foreground.Green = Foreground.Blue = (Attribute & 15) == EFI_BLACK ? 0 : 255;
+  Background.Red = Background.Green = Background.Blue = ((Attribute >> 4) & 7) == EFI_LIGHTGRAY ? 0x98 : 0;
+  return EFI_ERROR (mMenuFont->DrawText (mMenuGop, String, Length, X, Y, Foreground, Background)) ? 0 : Length;
 }
 
 /**
@@ -152,63 +129,17 @@ PrintCharAt (
 
 **/
 UINTN
-GetLineWidth (
-  IN EFI_STRING_ID  StringId
-  )
+GetLineWidth (IN EFI_STRING_ID StringId)
 {
-  UINTN       Index;
-  UINTN       IncrementValue;
-  EFI_STRING  String;
-  UINTN       LineWidth;
+  EFI_STRING String = HiiGetString (gStringPackHandle, StringId, NULL);
+  UINTN Width;
 
-  LineWidth = 0;
-  String    = HiiGetString (gStringPackHandle, StringId, NULL);
-
-  if (String != NULL) {
-    Index          = 0;
-    IncrementValue = 1;
-
-    do {
-      //
-      // Advance to the null-terminator or to the first width directive
-      //
-      for ( ;
-            (String[Index] != NARROW_CHAR) && (String[Index] != WIDE_CHAR) && (String[Index] != 0);
-            Index++, LineWidth = LineWidth + IncrementValue
-            )
-      {
-      }
-
-      //
-      // We hit the null-terminator, we now have a count
-      //
-      if (String[Index] == 0) {
-        break;
-      }
-
-      //
-      // We encountered a narrow directive - strip it from the size calculation since it doesn't get printed
-      // and also set the flag that determines what we increment by.(if narrow, increment by 1, if wide increment by 2)
-      //
-      if (String[Index] == NARROW_CHAR) {
-        //
-        // Skip to the next character
-        //
-        Index++;
-        IncrementValue = 1;
-      } else {
-        //
-        // Skip to the next character
-        //
-        Index++;
-        IncrementValue = 2;
-      }
-    } while (String[Index] != 0);
-
-    FreePool (String);
+  if (String == NULL) {
+    return 0;
   }
-
-  return LineWidth;
+  Width = StrLen (String);
+  FreePool (String);
+  return Width;
 }
 
 /**
@@ -295,73 +226,6 @@ InitializeBootMenuScreen (
 }
 
 /**
-  This function uses check boot option is wheher setup application or no
-
-  @param   BootOption   Pointer to EFI_BOOT_MANAGER_LOAD_OPTION array.
-
-  @retval  TRUE         This boot option is setup application.
-  @retval  FALSE        This boot options isn't setup application
-
-**/
-BOOLEAN
-IsBootManagerMenu (
-  IN  EFI_BOOT_MANAGER_LOAD_OPTION  *BootOption
-  )
-{
-  EFI_STATUS                    Status;
-  EFI_BOOT_MANAGER_LOAD_OPTION  BootManagerMenu;
-
-  Status = EfiBootManagerGetBootManagerMenu (&BootManagerMenu);
-  if (!EFI_ERROR (Status)) {
-    EfiBootManagerFreeLoadOption (&BootManagerMenu);
-  }
-
-  return (BOOLEAN)(!EFI_ERROR (Status) && (BootOption->OptionNumber == BootManagerMenu.OptionNumber));
-}
-
-/**
-  Return whether to ignore the boot option.
-
-  @param BootOption  Pointer to EFI_BOOT_MANAGER_LOAD_OPTION to check.
-
-  @retval TRUE  Ignore the boot option.
-  @retval FALSE Do not ignore the boot option.
-**/
-BOOLEAN
-IgnoreBootOption (
-  IN   EFI_BOOT_MANAGER_LOAD_OPTION  *BootOption
-  )
-{
-  EFI_STATUS                Status;
-  EFI_DEVICE_PATH_PROTOCOL  *ImageDevicePath;
-
-  //
-  // Ignore myself.
-  //
-  Status = gBS->HandleProtocol (gImageHandle, &gEfiLoadedImageDevicePathProtocolGuid, (VOID **)&ImageDevicePath);
-  ASSERT_EFI_ERROR (Status);
-  if (CompareMem (BootOption->FilePath, ImageDevicePath, GetDevicePathSize (ImageDevicePath)) == 0) {
-    return TRUE;
-  }
-
-  //
-  // Do not ignore Boot Manager Menu.
-  //
-  if (IsBootManagerMenu (BootOption)) {
-    return FALSE;
-  }
-
-  //
-  // Ignore "UEFI Misc Device" boot options.
-  //
-  if (BootOption->Description != NULL && StrnCmp (BootOption->Description, L"UEFI Misc Device", 16) == 0) {
-    return TRUE;
-  }
-
-  return FALSE;
-}
-
-/**
   This function uses to initialize boot menu data
 
   @param   BootOption             Pointer to EFI_BOOT_MANAGER_LOAD_OPTION array.
@@ -380,26 +244,19 @@ InitializeBootMenuData (
   )
 {
   UINTN  Index;
-  UINTN  StrIndex;
 
   if ((BootOption == NULL) || (BootMenuData == NULL)) {
     return EFI_INVALID_PARAMETER;
   }
 
   BootMenuData->TitleToken[0] = STRING_TOKEN (STR_BOOT_POPUP_MENU_TITLE_STRING);
-  BootMenuData->PtrTokens     = AllocateZeroPool ((BootOptionCount + 2) * sizeof (EFI_STRING_ID));
+  BootMenuData->PtrTokens     = AllocateZeroPool ((BootOptionCount + 1) * sizeof (EFI_STRING_ID));
   ASSERT (BootMenuData->PtrTokens != NULL);
 
-  //
-  // Skip boot option which created by BootNext Variable
-  //
-  for (StrIndex = 0, Index = 0; Index < BootOptionCount; Index++) {
-    if (IgnoreBootOption (&BootOption[Index])) {
-      continue;
-    }
+  for (Index = 0; Index < BootOptionCount; Index++) {
 
     ASSERT (BootOption[Index].Description != NULL);
-    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (
+    BootMenuData->PtrTokens[Index] = HiiSetString (
                                             gStringPackHandle,
                                             0,
                                             BootOption[Index].Description,
@@ -407,15 +264,9 @@ InitializeBootMenuData (
                                             );
   }
 
-  //
-  if (!mInternalStorageMenu) {
-    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Power Off", NULL);
-    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Exit", NULL);
-  } else {
-    BootMenuData->PtrTokens[StrIndex++] = HiiSetString (gStringPackHandle, 0, L"Back", NULL);
-  }
-
-  BootMenuData->ItemCount    = StrIndex;
+  BootMenuData->PtrTokens[BootOptionCount] = HiiSetString (
+    gStringPackHandle, 0, mInternalStorageMenu ? L"Back" : L"Exit", NULL);
+  BootMenuData->ItemCount = BootOptionCount + 1;
   BootMenuData->HelpToken[0] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP1_STRING);
   BootMenuData->HelpToken[1] = STRING_TOKEN (STR_BOOT_POPUP_MENU_HELP2_STRING);
   InitializeBootMenuScreen (BootMenuData);
@@ -532,7 +383,7 @@ BootMenuSelectItem (
     }
 
     for (Index = 0; Index < ItemCountPerScreen; Index++) {
-      PrintStringAt (PrintCol, PrintRow + Index, String);
+      PrintStringAt (PrintCol, PrintRow + Index, String, 0);
     }
 
     FreePool (String);
@@ -541,7 +392,7 @@ BootMenuSelectItem (
     //
     for (Index = 0; Index < ItemCountPerScreen; Index++, PrintRow++) {
       String = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[Index + FirstItem], NULL);
-      PrintStringAt (PrintCol, PrintRow, String);
+      PrintStringAt (PrintCol, PrintRow, String, 0);
       FreePool (String);
     }
 
@@ -558,7 +409,7 @@ BootMenuSelectItem (
     String   = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[BootMenuData->SelectItem], NULL);
     PrintCol = StartCol  + 1;
     PrintRow = StartRow + 3 + BootMenuData->SelectItem - FirstItem;
-    PrintStringAt (PrintCol, PrintRow, String);
+    PrintStringAt (PrintCol, PrintRow, String, 0);
     FreePool (String);
   }
 
@@ -569,7 +420,7 @@ BootMenuSelectItem (
   String   = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[WantSelectItem], NULL);
   PrintCol = StartCol  + 1;
   PrintRow = StartRow + TITLE_TOKEN_COUNT + 2 + WantSelectItem - FirstItem;
-  PrintStringAt (PrintCol, PrintRow, String);
+  PrintStringAt (PrintCol, PrintRow, String, 0);
   FreePool (String);
 
   gST->ConOut->SetAttribute (gST->ConOut, SavedAttribute);
@@ -597,7 +448,6 @@ DrawBootPopupMenu (
   UINTN       StartRow;
   UINTN       PrintRow;
   UINTN       PrintCol;
-  UINTN       LineWidth;
   INT32       SavedAttribute;
   UINTN       ItemCountPerScreen;
 
@@ -634,7 +484,7 @@ DrawBootPopupMenu (
   for (Index = 0; Index < TITLE_TOKEN_COUNT; Index++) {
     PrintRow++;
     PrintCharAt (StartCol, PrintRow, BOXDRAW_VERTICAL);
-    PrintStringAt (StartCol + 1, PrintRow, String);
+    PrintStringAt (StartCol + 1, PrintRow, String, 0);
     PrintCharAt (StartCol + Width - 1, PrintRow, BOXDRAW_VERTICAL);
   }
 
@@ -652,7 +502,7 @@ DrawBootPopupMenu (
   for (Index = 0; Index < ItemCountPerScreen; Index++) {
     PrintRow++;
     PrintCharAt (StartCol, PrintRow, BOXDRAW_VERTICAL);
-    PrintStringAt (StartCol + 1, PrintRow, String);
+    PrintStringAt (StartCol + 1, PrintRow, String, 0);
     PrintCharAt (StartCol + Width - 1, PrintRow, BOXDRAW_VERTICAL);
   }
 
@@ -670,7 +520,7 @@ DrawBootPopupMenu (
   for (Index = 0; Index < HELP_TOKEN_COUNT; Index++) {
     PrintRow++;
     PrintCharAt (StartCol, PrintRow, BOXDRAW_VERTICAL);
-    PrintStringAt (StartCol + 1, PrintRow, String);
+    PrintStringAt (StartCol + 1, PrintRow, String, 0);
     PrintCharAt (StartCol + Width - 1, PrintRow, BOXDRAW_VERTICAL);
   }
 
@@ -690,9 +540,7 @@ DrawBootPopupMenu (
   PrintRow = StartRow + 1;
   for (Index = 0; Index < TITLE_TOKEN_COUNT; Index++, PrintRow++) {
     String    = HiiGetString (gStringPackHandle, BootMenuData->TitleToken[Index], NULL);
-    LineWidth = GetLineWidth (BootMenuData->TitleToken[Index]);
-    PrintCol  = StartCol + (Width - LineWidth) / 2;
-    PrintStringAt (PrintCol, PrintRow, String);
+    PrintStringAt (StartCol, PrintRow, String, Width);
     FreePool (String);
   }
 
@@ -703,7 +551,7 @@ DrawBootPopupMenu (
   PrintRow = StartRow + TITLE_TOKEN_COUNT + 2;
   for (Index = 0; Index < ItemCountPerScreen; Index++, PrintRow++) {
     String = HiiGetString (gStringPackHandle, BootMenuData->PtrTokens[Index], NULL);
-    PrintStringAt (PrintCol, PrintRow, String);
+    PrintStringAt (PrintCol, PrintRow, String, 0);
     FreePool (String);
   }
 
@@ -713,9 +561,7 @@ DrawBootPopupMenu (
   PrintRow++;
   for (Index = 0; Index < HELP_TOKEN_COUNT; Index++, PrintRow++) {
     String    = HiiGetString (gStringPackHandle, BootMenuData->HelpToken[Index], NULL);
-    LineWidth = GetLineWidth (BootMenuData->HelpToken[Index]);
-    PrintCol  = StartCol + (Width - LineWidth) / 2;
-    PrintStringAt (PrintCol, PrintRow, String);
+    PrintStringAt (StartCol, PrintRow, String, Width);
     FreePool (String);
   }
 
@@ -749,40 +595,19 @@ DrawBootPopupMenu (
 **/
 VOID
 BootFromSelectOption (
-  IN   EFI_BOOT_MANAGER_LOAD_OPTION  *BootOptions,
-  IN   UINTN                         BootOptionCount,
-  IN   UINTN                         SelectItem
+  IN EFI_BOOT_MANAGER_LOAD_OPTION *BootOptions,
+  IN UINTN BootOptionCount,
+  IN UINTN SelectItem
   )
 {
-  UINTN  ItemNum;
-  UINTN  Index;
-
-  ASSERT (BootOptions != NULL);
-
-  for (ItemNum = 0, Index = 0; Index < BootOptionCount; Index++) {
-    if (IgnoreBootOption (&BootOptions[Index])) {
-      continue;
+  if (SelectItem < BootOptionCount) {
+    EfiBootManagerBoot (&BootOptions[SelectItem]);
+  } else if (SelectItem == BootOptionCount) {
+    if (mInternalStorageMenu) {
+      gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
+    } else {
+      gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
     }
-
-    if (ItemNum++ == SelectItem) {
-      EfiBootManagerBoot (&BootOptions[Index]);
-      break;
-    }
-  }
-
-  // Back
-  if (mInternalStorageMenu && (SelectItem == ItemNum)) {
-    gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
-  }
-
-  // Power Off
-  if (!mInternalStorageMenu && (SelectItem == ItemNum)) {
-    gRT->ResetSystem (EfiResetShutdown, EFI_SUCCESS, 0, NULL);
-  }
-
-  // Exit
-  if (!mInternalStorageMenu && (SelectItem == ItemNum + 1)) {
-    gBS->Exit (gImageHandle, EFI_SUCCESS, 0, NULL);
   }
 }
 
@@ -1037,10 +862,17 @@ BootMenuEntry (
   UINTN                            BootTextColumn;
   UINTN                            BootTextRow;
   EFI_LOADED_IMAGE_PROTOCOL        *LoadedImage;
-  EFI_BOOT_MANAGER_LOAD_OPTION     *InternalOptions;
   MEDIA_FW_VOL_FILEPATH_DEVICE_PATH FileNode;
   EFI_DEVICE_PATH_PROTOCOL         *DevicePath;
-  BOOLEAN                          InternalStorage;
+
+  Status = gBS->LocateProtocol (&gConsoleFontProtocolGuid, NULL, (VOID **)&mMenuFont);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
+  Status = gBS->LocateProtocol (&gEfiGraphicsOutputProtocolGuid, NULL, (VOID **)&mMenuGop);
+  if (EFI_ERROR (Status)) {
+    return Status;
+  }
 
   //
   // Set Logo status invalid when boot manager menu is launched
@@ -1066,60 +898,51 @@ BootMenuEntry (
   // Connect all prior to entering the platform setup menu.
   //
   EfiBootManagerConnectAll ();
-  EfiBootManagerRefreshAllBootOption ();
 
-  InternalStorage = FALSE;
-  LoadedImage = NULL;
   Status = gBS->HandleProtocol (ImageHandle, &gEfiLoadedImageProtocolGuid, (VOID **)&LoadedImage);
-  if (!EFI_ERROR (Status) && LoadedImage->LoadOptionsSize == sizeof ("INTERNAL_STORAGE") &&
-      CompareMem (LoadedImage->LoadOptions, "INTERNAL_STORAGE", sizeof ("INTERNAL_STORAGE")) == 0) {
-    InternalStorage = TRUE;
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
+  mInternalStorageMenu = LoadedImage->LoadOptionsSize == sizeof ("INTERNAL_STORAGE") &&
+    CompareMem (LoadedImage->LoadOptions, "INTERNAL_STORAGE", sizeof ("INTERNAL_STORAGE")) == 0;
 
-  if (InternalStorage) {
-    mInternalStorageMenu = TRUE;
-    InternalOptions = AllocateZeroPool (3 * sizeof (*InternalOptions));
-    if (InternalOptions == NULL) {
+  {
+    EFI_GUID *Files[] = {
+      mInternalStorageMenu ? &mGeneralBootGuid : &mInternalMenuGuid,
+      mInternalStorageMenu ? &mLinuxBootGuid : FixedPcdGetPtr (PcdMassStorageFile),
+      &gMsBootPolicyFileGuid, FixedPcdGetPtr (PcdUfpLoaderFile)
+    };
+    CHAR16 *Names[] = {
+      mInternalStorageMenu ? L"General" : L"Internal",
+      mInternalStorageMenu ? L"Linux" : L"Mass", L"USB", L"FFU"
+    };
+    UINTN Count = mInternalStorageMenu ? 2 : 4;
+
+    BootOption = AllocateZeroPool (Count * sizeof (*BootOption));
+    if (BootOption == NULL) {
       return EFI_OUT_OF_RESOURCES;
     }
-    BootOptionCount = 0;
-    for (Index = 0; Index < 3; Index++) {
-      EFI_GUID *FileGuid = (Index == 0) ? &mGenericBootGuid
-                         : (Index == 1) ? &mLinuxBootGuid : &mWindowsBootGuid;
-      CHAR16 *Description = (Index == 0) ? L"Generic"
-                          : (Index == 1) ? L"Linux" : L"Windows";
-      CHAR8 *Parameter = (Index == 0) ? HUMMER_GENERIC_BOOT_OPTION
-                       : (Index == 1) ? NULL : HUMMER_WINDOWS_BOOT_OPTION;
-
-      EfiInitializeFwVolDevicepathNode (&FileNode, FileGuid);
+    for (BootOptionCount = 0; BootOptionCount < Count; BootOptionCount++) {
+      EfiInitializeFwVolDevicepathNode (&FileNode, Files[BootOptionCount]);
       DevicePath = AppendDevicePathNode (DevicePathFromHandle (LoadedImage->DeviceHandle), (EFI_DEVICE_PATH_PROTOCOL *)&FileNode);
       if (DevicePath == NULL) {
         Status = EFI_NOT_FOUND;
         break;
       }
       Status = EfiBootManagerInitializeLoadOption (
-                 &InternalOptions[BootOptionCount],
-                 LoadOptionNumberUnassigned,
-                 LoadOptionTypeBoot,
-                 LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP,
-                 Description,
-                 DevicePath,
-                 (UINT8 *)Parameter,
-                 (Parameter != NULL) ? (UINT32)AsciiStrSize (Parameter) : 0
-                 );
+        &BootOption[BootOptionCount], LoadOptionNumberUnassigned, LoadOptionTypeBoot,
+        LOAD_OPTION_ACTIVE | LOAD_OPTION_CATEGORY_APP, Names[BootOptionCount], DevicePath,
+        (BootOptionCount == 2) ? (UINT8 *)"USB" : NULL,
+        (BootOptionCount == 2) ? sizeof ("USB") : 0);
       FreePool (DevicePath);
       if (EFI_ERROR (Status)) {
         break;
       }
-      BootOptionCount++;
     }
     if (EFI_ERROR (Status)) {
-      EfiBootManagerFreeLoadOptions (InternalOptions, BootOptionCount);
+      EfiBootManagerFreeLoadOptions (BootOption, BootOptionCount);
       return Status;
     }
-    BootOption = InternalOptions;
-  } else {
-    BootOption = EfiBootManagerGetLoadOptions (&BootOptionCount, LoadOptionTypeBoot);
   }
 
   if (!mModeInitialized) {

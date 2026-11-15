@@ -14,7 +14,6 @@
 
 [Sources]
   BootManager.c
-  KeyCallback.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -24,26 +23,16 @@
   SiliciumPkg/SiliciumPkg.dec
 
 [LibraryClasses]
-  BaseLib
-  PcdLib
   DebugLib
   AcpiTableUpdateLib
   DeviceBootManagerLib
   UefiBootServicesTableLib
-  UefiRuntimeServicesTableLib
   SecureBootHandlerLib
-  MemoryAllocationLib
   MsBootOptionsLib
-  DevicePathLib
-  PrintLib
-
-[Pcd]
-  gEfiMdePkgTokenSpaceGuid.PcdPlatformBootTimeOut
 
 [Guids]
   gEfiEndOfDxeEventGroupGuid
 
 [Protocols]
-  gKeypadDeviceProtocolGuid
   gEfiGraphicsOutputProtocolGuid
   gEfiSimpleTextInputExProtocolGuid
