@@ -1,0 +1,19 @@
+[Defines]
+  INF_VERSION = 1.29
+  BASE_NAME = HummerResetSystemLib
+  FILE_GUID = 1C569141-4D04-48BA-A55D-8060E487BDE5
+  MODULE_TYPE = BASE
+  VERSION_STRING = 1.0
+  LIBRARY_CLASS = ResetSystemLib
+  LIBRARY_CLASS = HwResetSystemLib
+
+[Sources]
+  ResetSystemLib.c
+
+[Packages]
+  ArmPkg/ArmPkg.dec
+  MdeModulePkg/MdeModulePkg.dec
+  MdePkg/MdePkg.dec
+
+[LibraryClasses]
+  ArmMonitorLib

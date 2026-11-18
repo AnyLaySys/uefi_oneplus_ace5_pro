@@ -54,6 +54,8 @@
   DeviceBootManagerLib|hummerPkg/Library/DeviceBootManagerLib/DeviceBootManagerLib.inf
   PlatformBootOptionsLib|hummerPkg/Library/PlatformBootOptionsLib/PlatformBootOptionsLib.inf
   WindowsKernelPatchLib|hummerPkg/Library/WindowsKernelPatchLib/WindowsKernelPatchLib.inf
+  ResetSystemLib|hummerPkg/Library/ResetSystemLib/ResetSystemLib.inf
+  HwResetSystemLib|hummerPkg/Library/ResetSystemLib/ResetSystemLib.inf
 
 [Components]
   ArmPkg/Drivers/CpuDxe/CpuDxe.inf {

@@ -5,8 +5,7 @@
 
 EFI_STATUS
 Pcie0Initialize (
-  IN EFI_HANDLE  *FileSystems,
-  IN UINTN       FileSystemCount
+  VOID
   );
 
 UINTN

@@ -13,6 +13,23 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
         Device (CPU6) { Name (_HID, "ACPI0007") Name (_UID, 6) }
         Device (CPU7) { Name (_HID, "ACPI0007") Name (_UID, 7) }
 
+        Device (KEYS)
+        {
+            Name (_HID, "HMRK0001")
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_S0W, 0)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x0C400000, 0x00003000)
+                Memory32Fixed (ReadWrite, 0x0C42D000, 0x00004000)
+                Memory32Fixed (ReadWrite, 0x0C440000, 0x00080000)
+                Memory32Fixed (ReadWrite, 0x0C500000, 0x00400000)
+                Memory32Fixed (ReadWrite, 0x0B220000, 0x00010000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, ExclusiveAndWake) { 778 }
+            })
+        }
+
         Device (WLN0)
         {
             Name (_HID, "HMRW7861")

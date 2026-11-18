@@ -154,7 +154,11 @@ RestoreBootLogo (VOID)
     return;
   }
   mPreservedBootLogo.BltBuffer = &mBootScreen[mPreservedBootLogo.Y * Width + mPreservedBootLogo.X];
-  EfiSignalEventReadyToBoot ();
+  if (mPreservedBootLogo.Update != NULL) {
+    EFI_TPL Tpl = gBS->RaiseTPL (TPL_CALLBACK);
+    mPreservedBootLogo.Update (NULL, NULL);
+    gBS->RestoreTPL (Tpl);
+  }
 }
 
 EFI_STATUS

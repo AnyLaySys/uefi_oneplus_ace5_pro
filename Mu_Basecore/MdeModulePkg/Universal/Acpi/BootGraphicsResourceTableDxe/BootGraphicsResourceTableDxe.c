@@ -533,6 +533,7 @@ BootGraphicsDxeEntryPoint (
 {
   EFI_STATUS                   Status;
   EFI_ACPI_DESCRIPTION_HEADER  *Header;
+  EFI_PRESERVED_BOOT_LOGO_PROTOCOL *Preserved;
 
   //
   // Update Header fields of Boot Graphics Resource Table from PCDs
@@ -574,6 +575,9 @@ BootGraphicsDxeEntryPoint (
                   &mBootGraphicsReadyToBootEvent
                   );
   ASSERT_EFI_ERROR (Status);
+  if (!EFI_ERROR (gBS->LocateProtocol (&gPreservedBootLogoProtocolGuid, NULL, (VOID **)&Preserved))) {
+    Preserved->Update = BgrtReadyToBootEventNotify;
+  }
 
   return Status;
 }

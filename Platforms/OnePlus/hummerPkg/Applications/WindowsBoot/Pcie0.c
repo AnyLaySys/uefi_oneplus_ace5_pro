@@ -1,26 +1,11 @@
 #include <PiDxe.h>
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
-#include <Library/DevicePathLib.h>
 #include <Library/DxeServicesTableLib.h>
 #include <Library/IoLib.h>
-#include <Library/MsBootPolicyLib.h>
-#include <Library/PrintLib.h>
 #include <Library/UefiBootServicesTableLib.h>
-#include <Library/UefiRuntimeServicesTableLib.h>
 #include <Protocol/EFIClock.h>
-#include <Protocol/SimpleFileSystem.h>
 #include "Pcie0.h"
-
-//
-// Powers the WCN7861 (PEACH, 17cb:110e) and trains PCIe0 before Windows
-// starts. The sequence follows mainline Linux on SM8750: pwrseq-qcom-wcn
-// (qcom,wcn7861-pmu), pcie-qcom (ops_1_9_0) and phy-qcom-qmp-pcie (sm8750
-// gen3x2). Windows does not enumerate the bus: the endpoint is left fully
-// configured and described by the WLN0 ACPI device in Dsdt.asl. The result is
-// published as the HummerPcie0Diagnostic variable and as \EFI\hummer-pcie0.txt
-// on the ESP.
-//
 
 #define GCC_BASE               0x00100000
 #define GCC_SIZE               0x00070000
@@ -100,34 +85,6 @@
 #define IPCC_SEND_ID           0x0040600C
 
 #define PCIE0_ENDPOINT_ID      0x110E17CB
-#define PCIE0_LOG_FILE         L"\\EFI\\hummer-pcie0.txt"
-
-typedef enum {
-  Pcie0StageStart,
-  Pcie0StageMmio,
-  Pcie0StageRails,
-  Pcie0StageClocks,
-  Pcie0StagePhy,
-  Pcie0StageLink,
-  Pcie0StageEndpoint,
-  Pcie0StageDone
-} PCIE0_STAGE;
-
-typedef struct {
-  UINT32  Signature;
-  UINT32  Version;
-  UINT32  Stage;
-  UINT32  Detail;
-  UINT64  Status;
-  UINT32  PhyStatus;
-  UINT32  LinkStatus;
-  UINT32  RootConfigId;
-  UINT32  EndpointConfigId;
-  UINT32  Ltssm;
-  UINT32  RailMask;
-  UINT32  QmpStep;
-  UINT32  Bar0Size;
-} PCIE0_DIAGNOSTIC;
 
 typedef struct {
   CONST CHAR8  *Name;
@@ -147,10 +104,6 @@ typedef struct {
   UINT32  MsgId;
   UINT32  CmdStride;
 } RSC_LAYOUT;
-
-STATIC EFI_GUID mPcie0DiagnosticGuid = {
-  0x5dfe4fd0, 0x94ad, 0x4c61, { 0x9f, 0x62, 0x71, 0x38, 0x40, 0x0a, 0x22, 0xc1 }
-};
 
 STATIC CONST UINT64 mPcie0Mmio[][2] = {
   { GCC_BASE,  GCC_SIZE      },
@@ -262,105 +215,7 @@ STATIC CONST PCIE0_PHY_WRITE mPcie0PhyInit[] = {
 STATIC CONST RSC_LAYOUT mRscV2 = { 0x10, 0x14, 0x18, 0x1C, 0x30, 20 };
 STATIC CONST RSC_LAYOUT mRscV3 = { 0x20, 0x24, 0x28, 0x2C, 0x34, 24 };
 
-STATIC PCIE0_DIAGNOSTIC mPcie0Diagnostic;
-STATIC CHAR8            mPcie0Log[4096];
-STATIC UINTN            mPcie0LogLength;
-STATIC EFI_HANDLE       *mPcie0FileSystems;
-STATIC UINTN            mPcie0FileSystemCount;
-STATIC BOOLEAN          mRscDumped;
 STATIC BOOLEAN          mQmpOpen;
-
-STATIC
-VOID
-EFIAPI
-Pcie0Log (
-  IN CONST CHAR8  *Format,
-  ...
-  )
-{
-  VA_LIST  Marker;
-
-  if (mPcie0LogLength >= sizeof (mPcie0Log) - 1) {
-    return;
-  }
-  VA_START (Marker, Format);
-  mPcie0LogLength += AsciiVSPrint (
-                       mPcie0Log + mPcie0LogLength,
-                       sizeof (mPcie0Log) - mPcie0LogLength,
-                       Format,
-                       Marker
-                       );
-  VA_END (Marker);
-}
-
-//
-// Writes the log to every non-USB volume that has \EFI (the ESP), so a run
-// that stops part way still leaves its last checkpoint behind.
-//
-STATIC
-VOID
-Pcie0Flush (
-  VOID
-  )
-{
-  EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *FileSystem;
-  EFI_DEVICE_PATH_PROTOCOL         *DevicePath;
-  EFI_FILE_PROTOCOL                *Root;
-  EFI_FILE_PROTOCOL                *File;
-  UINTN                            Index;
-  UINTN                            Size;
-
-  for (Index = 0; Index < mPcie0FileSystemCount; Index++) {
-    DevicePath = DevicePathFromHandle (mPcie0FileSystems[Index]);
-    if ((DevicePath == NULL) || MsBootPolicyLibIsDevicePathUsb (DevicePath) ||
-        EFI_ERROR (gBS->HandleProtocol (mPcie0FileSystems[Index], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&FileSystem)) ||
-        EFI_ERROR (FileSystem->OpenVolume (FileSystem, &Root)))
-    {
-      continue;
-    }
-    if (!EFI_ERROR (Root->Open (Root, &File, PCIE0_LOG_FILE, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE, 0))) {
-      File->Delete (File);
-    }
-    if (!EFI_ERROR (Root->Open (Root, &File, PCIE0_LOG_FILE, EFI_FILE_MODE_READ | EFI_FILE_MODE_WRITE | EFI_FILE_MODE_CREATE, 0))) {
-      Size = mPcie0LogLength;
-      File->Write (File, &Size, mPcie0Log);
-      File->Close (File);
-    }
-    Root->Close (Root);
-  }
-}
-
-STATIC
-VOID
-Pcie0Save (
-  VOID
-  )
-{
-  gRT->SetVariable (
-         L"HummerPcie0Diagnostic",
-         &mPcie0DiagnosticGuid,
-         EFI_VARIABLE_BOOTSERVICE_ACCESS | EFI_VARIABLE_RUNTIME_ACCESS,
-         sizeof (mPcie0Diagnostic),
-         &mPcie0Diagnostic
-         );
-}
-
-STATIC
-EFI_STATUS
-Pcie0Finish (
-  IN PCIE0_STAGE  Stage,
-  IN UINT32       Detail,
-  IN EFI_STATUS   Status
-  )
-{
-  mPcie0Diagnostic.Stage  = Stage;
-  mPcie0Diagnostic.Detail = Detail;
-  mPcie0Diagnostic.Status = Status;
-  Pcie0Save ();
-  Pcie0Log ("result: stage=%u detail=%u status=%r\r\n", Stage, Detail, Status);
-  Pcie0Flush ();
-  return Status;
-}
 
 STATIC
 EFI_STATUS
@@ -535,28 +390,6 @@ RpmhWrite (
   Tpl    = gBS->RaiseTPL (TPL_HIGH_LEVEL);
   Base   = 0;
   Tcs    = RSC_ACTIVE_TCS;
-  if (!mRscDumped) {
-    mRscDumped = TRUE;
-    Pcie0Log (
-      "rsc: id=0x%08x cfg=0x%08x irq_en=0x%08x irq_st=0x%08x\r\n",
-      MmioRead32 (RSC_BASE),
-      MmioRead32 (RSC_BASE + 0x0C),
-      MmioRead32 (RSC_TCS_BASE + RSC_IRQ_ENABLE),
-      MmioRead32 (RSC_TCS_BASE + RSC_IRQ_STATUS)
-      );
-    for (Tcs = 0; Tcs < RSC_ACTIVE_TCS; Tcs++) {
-      Base = RSC_TCS_BASE + Tcs * RSC_TCS_STRIDE;
-      Pcie0Log (
-        "tcs%u: ctl=0x%08x en=0x%08x wait=0x%08x st=0x%08x\r\n",
-        (UINT32)Tcs,
-        MmioRead32 (Base + Layout->Control),
-        MmioRead32 (Base + Layout->Enable),
-        MmioRead32 (Base + Layout->Wait),
-        MmioRead32 (Base + Layout->Status)
-        );
-    }
-  }
-
   //
   // DRV_STATUS != 0 is the hardware idle indication. Completed AMC requests
   // leave AMC_ENABLE and the enable/wait masks behind, so a clean TCS is only
@@ -622,16 +455,7 @@ RpmhWrite (
       }
     }
     Status = Done ? EFI_SUCCESS : EFI_TIMEOUT;
-    if (!Done) {
-      Pcie0Log (
-        "tcs%u timeout: st=0x%08x cmd0=0x%08x irq_st=0x%08x\r\n",
-        (UINT32)Tcs,
-        MmioRead32 (Base + Layout->Status),
-        MmioRead32 (Base + Layout->MsgId + 12),
-        MmioRead32 (RSC_TCS_BASE + RSC_IRQ_STATUS)
-        );
     }
-  }
 
   RscWriteSync (Base + Layout->Control, RSC_AMC_ENABLE);
   RscWriteSync (Base + Layout->Control, 0);
@@ -725,29 +549,22 @@ QmpSend (
   return TRUE;
 }
 
-//
-// AOSS QMP link bring-up (qcom_aoss.c qmp_open) followed by the WLAN PDC init
-// table that pwrseq-qcom-wcn sends at probe. Returns 0, or the failed step.
-//
 STATIC
-UINT32
+VOID
 QmpSendPdcInit (
   VOID
   )
 {
   UINTN   Index;
-  UINT32  Step;
 
-  Step = QmpOpen ();
-  if (Step != 0) {
-    return Step;
+  if (QmpOpen () != 0) {
+    return;
   }
   for (Index = 0; Index < ARRAY_SIZE (mPcie0PdcInit); Index++) {
     if (!QmpSend (mPcie0PdcInit[Index])) {
-      return 6 + (UINT32)Index;
+      return;
     }
   }
-  return 0;
 }
 
 STATIC
@@ -801,8 +618,6 @@ Pcie0AssignResources (
     Mask |= 0xFFFFFFFF00000000ULL;
   }
   Size                      = ~Mask + 1;
-  mPcie0Diagnostic.Bar0Size = (UINT32)Size;
-  Pcie0Log ("bar0: raw=0x%08x size=0x%lx\r\n", Bar, Size);
   if (((Bar & BIT0) != 0) || (Size == 0) || (Size > BAR0_MAX_SIZE)) {
     return 1;
   }
@@ -852,31 +667,12 @@ Pcie0AssignResources (
   MmioWrite32 (DBI_BASE + DBI_MSI_INTR0_STATUS, MAX_UINT32);
   MmioWrite32 (DBI_BASE + DBI_MSI_INTR0_ENABLE, MAX_UINT32);
 
-  Pcie0Log (
-    "resources: bar0=0x%08x cmd rp=0x%08x ep=0x%08x msi=0x%lx\r\n",
-    MmioRead32 (CONF_BASE + 0x10),
-    MmioRead32 (DBI_BASE + 0x04),
-    MmioRead32 (CONF_BASE + 0x04),
-    MsiTarget
-    );
-  Pcie0Flush ();
-
-  //
-  // MHI registers at the start of BAR0 (MHIREGLEN, MHIVER, BHIOFF).
-  //
-  Pcie0Log (
-    "bar0 mhi: reglen=0x%08x ver=0x%08x bhioff=0x%08x\r\n",
-    MmioRead32 (BAR0_BASE + 0x00),
-    MmioRead32 (BAR0_BASE + 0x08),
-    MmioRead32 (BAR0_BASE + 0x28)
-    );
   return 0;
 }
 
 EFI_STATUS
 Pcie0Initialize (
-  IN EFI_HANDLE  *FileSystems,
-  IN UINTN       FileSystemCount
+  VOID
   )
 {
   STATIC CONST UINT32  VrmOffsets[] = { 0x0, 0x8, 0x4 };  // voltage, mode, enable
@@ -888,44 +684,25 @@ Pcie0Initialize (
   UINT32               Address;
   UINT32               Capability;
   UINT32               Vendor;
-  UINT32               Step;
+  UINT32               Value;
   UINT32               Freq;
   UINTN                Index;
   UINTN                Id;
   UINTN                Retry;
 
-  ZeroMem (&mPcie0Diagnostic, sizeof (mPcie0Diagnostic));
-  mPcie0Diagnostic.Signature = 0x30494350;
-  mPcie0Diagnostic.Version   = 2;
-  mPcie0LogLength            = 0;
-  mPcie0FileSystems          = FileSystems;
-  mPcie0FileSystemCount      = FileSystemCount;
-  mPcie0Diagnostic.Status    = EFI_NOT_READY;
-  Pcie0Save ();
-  Pcie0Log ("hummer PCIe0 / WCN7861 bring-up, diagnostic v2\r\n");
-
   for (Index = 0; Index < ARRAY_SIZE (mPcie0Mmio); Index++) {
     Status = Pcie0MapMmio (mPcie0Mmio[Index][0], mPcie0Mmio[Index][1]);
-    Pcie0Log ("mmio 0x%lx+0x%lx: %r\r\n", mPcie0Mmio[Index][0], mPcie0Mmio[Index][1], Status);
     if (EFI_ERROR (Status)) {
-      return Pcie0Finish (Pcie0StageMmio, (UINT32)Index, Status);
+      return Status;
     }
   }
-
-  Pcie0Flush ();
 
   Pcie0ConfigureGpio (GPIO_PERST, 0, GPIO_PULL_DOWN, TRUE, FALSE);
   Pcie0ConfigureGpio (GPIO_CLKREQ, 1, GPIO_PULL_UP, FALSE, FALSE);
   Pcie0ConfigureGpio (GPIO_WAKE, 0, GPIO_PULL_UP, FALSE, FALSE);
   Pcie0ConfigureGpio (GPIO_WLAN_EN, 0, GPIO_PULL_DOWN, TRUE, FALSE);
 
-  mPcie0Diagnostic.QmpStep = QmpSendPdcInit ();
-  Pcie0Log ("aoss-qmp pdc-init: step=%u\r\n", mPcie0Diagnostic.QmpStep);
-
-  //
-  // Rail failures are recorded in RailMask but not fatal, so one run also
-  // shows how far the PHY and the link get without the missing supply.
-  //
+  QmpSendPdcInit ();
   for (Index = 0; Index < ARRAY_SIZE (mPcie0Rails); Index++) {
     Address = CmdDbAddress (mPcie0Rails[Index].Name);
     if (Address == 0) {
@@ -939,10 +716,6 @@ Pcie0Initialize (
       Values[2] = 1;
       Status    = RpmhWrite (Address, ARRAY_SIZE (Values), VrmOffsets, Values);
     }
-    Pcie0Log ("rail %a addr=0x%x mv=%u: %r\r\n", mPcie0Rails[Index].Name, Address, mPcie0Rails[Index].Value, Status);
-    if (!EFI_ERROR (Status)) {
-      mPcie0Diagnostic.RailMask |= 1U << Index;
-    }
   }
 
   for (Index = 0; Index < ARRAY_SIZE (mPcie0Bcms); Index++) {
@@ -953,25 +726,22 @@ Pcie0Initialize (
       Values[0] = BCM_TCS_CMD (mPcie0Bcms[Index].Value, mPcie0Bcms[Index].Value);
       Status    = RpmhWrite (Address, 1, &BcmOffset, Values);
     }
-    Pcie0Log ("bcm %a addr=0x%x vote=0x%x: %r\r\n", mPcie0Bcms[Index].Name, Address, mPcie0Bcms[Index].Value, Status);
   }
 
   Pcie0ConfigureGpio (GPIO_WLAN_EN, 0, GPIO_PULL_DOWN, TRUE, TRUE);
   gBS->Stall (50000);
-  Pcie0Flush ();
 
   Status = gBS->LocateProtocol (&gEfiClockProtocolGuid, NULL, (VOID **)&Clock);
   if (EFI_ERROR (Status)) {
-    return Pcie0Finish (Pcie0StageClocks, 0, Status);
+    return Status;
   }
   for (Index = 0; Index < ARRAY_SIZE (mPcie0PowerDomains); Index++) {
     Status = Clock->GetClockPowerDomainID (Clock, mPcie0PowerDomains[Index], &Id);
     if (!EFI_ERROR (Status)) {
       Status = Clock->EnableClockPowerDomain (Clock, Id);
     }
-    Pcie0Log ("domain %a: %r\r\n", mPcie0PowerDomains[Index], Status);
     if (EFI_ERROR (Status)) {
-      return Pcie0Finish (Pcie0StageClocks, (UINT32)Index, Status);
+      return Status;
     }
   }
   MmioOr32 (GCC_PCIE0_PHY_BCR, BIT0);
@@ -986,18 +756,14 @@ Pcie0Initialize (
     if (!EFI_ERROR (Status)) {
       Status = Clock->EnableClock (Clock, Id);
     }
-    Pcie0Log ("clock %a hz=%u: %r\r\n", mPcie0Clocks[Index].Name, Freq, Status);
     if (EFI_ERROR (Status)) {
-      return Pcie0Finish (Pcie0StageClocks, (UINT32)(ARRAY_SIZE (mPcie0PowerDomains) + Index), Status);
+      return Status;
     }
   }
   MmioOr32 (GCC_PCIE0_BCR, BIT0);
   gBS->Stall (1000);
   MmioAnd32 (GCC_PCIE0_BCR, ~(UINT32)BIT0);
   gBS->Stall (1000);
-  Pcie0Log ("controller reset released\r\n");
-  Pcie0Flush ();
-
   //
   // qcom_pcie_init_2_7_0
   //
@@ -1013,9 +779,6 @@ Pcie0Initialize (
   MmioOr32 (PARF_BASE + PARF_MHI_CLOCK_RESET, BIT4);
   MmioAnd32 (PARF_BASE + PARF_PM_CTRL, ~(UINT32)BIT5);
   MmioOr32 (PARF_BASE + PARF_AXI_MSTR_WR_HALT, BIT31);
-  Pcie0Log ("parf: ltssm=0x%08x\r\n", MmioRead32 (PARF_BASE + PARF_LTSSM));
-  Pcie0Flush ();
-
   //
   // qmp_pcie_power_on, pipe clock source switched to the PHY
   //
@@ -1029,24 +792,19 @@ Pcie0Initialize (
   MmioOr32 (PHY_BASE + PCS_START, 0x3);
   gBS->Stall (1000);
   for (Retry = 0; Retry < 100; Retry++) {
-    mPcie0Diagnostic.PhyStatus = MmioRead32 (PHY_BASE + PCS_STATUS1);
-    if ((mPcie0Diagnostic.PhyStatus & BIT6) == 0) {
+    Value = MmioRead32 (PHY_BASE + PCS_STATUS1);
+    if ((Value & BIT6) == 0) {
       break;
     }
     gBS->Stall (200);
   }
-  Pcie0Log ("phy: pcs_status1=0x%x after %u polls\r\n", mPcie0Diagnostic.PhyStatus, Retry);
   if (Retry == 100) {
-    return Pcie0Finish (Pcie0StagePhy, 0, EFI_TIMEOUT);
+    return EFI_TIMEOUT;
   }
-  Pcie0Flush ();
 
-  mPcie0Diagnostic.RootConfigId = MmioRead32 (DBI_BASE);
   Capability                    = Pcie0FindCapability (0x10);
-  Pcie0Log ("root port: id=0x%08x pcie-cap=0x%x\r\n", mPcie0Diagnostic.RootConfigId, Capability);
-  Pcie0Flush ();
   if (Capability == 0) {
-    return Pcie0Finish (Pcie0StageLink, 0, EFI_DEVICE_ERROR);
+    return EFI_DEVICE_ERROR;
   }
 
   //
@@ -1060,23 +818,14 @@ Pcie0Initialize (
   MmioOr32 (PARF_BASE + PARF_LTSSM, BIT8);
   for (Retry = 0; Retry < 100; Retry++) {
     gBS->Stall (10000);
-    mPcie0Diagnostic.LinkStatus = MmioRead32 (DBI_BASE + Capability + 0x10);
-    if ((mPcie0Diagnostic.LinkStatus & BIT29) != 0) {
+    Value = MmioRead32 (DBI_BASE + Capability + 0x10);
+    if ((Value & BIT29) != 0) {
       break;
     }
   }
-  mPcie0Diagnostic.Ltssm = MmioRead32 (PARF_BASE + PARF_LTSSM);
-  Pcie0Log (
-    "link: lnkctl/sta=0x%08x ltssm=0x%08x elbi=0x%08x after %u ms\r\n",
-    mPcie0Diagnostic.LinkStatus,
-    mPcie0Diagnostic.Ltssm,
-    MmioRead32 (ELBI_BASE + 0x08),
-    (Retry + 1) * 10
-    );
   if (Retry == 100) {
-    return Pcie0Finish (Pcie0StageLink, 0, EFI_TIMEOUT);
+    return EFI_TIMEOUT;
   }
-  Pcie0Flush ();
 
   //
   // Outbound iATU region 0: CFG0 to bus 1, device 0, function 0.
@@ -1094,25 +843,19 @@ Pcie0Initialize (
     gBS->Stall (1000);
   }
   for (Retry = 0; Retry < 100; Retry++) {
-    mPcie0Diagnostic.EndpointConfigId = MmioRead32 (CONF_BASE);
-    Vendor                            = mPcie0Diagnostic.EndpointConfigId & 0xFFFF;
+    Value = MmioRead32 (CONF_BASE);
+    Vendor                            = Value & 0xFFFF;
     if ((Vendor != 0xFFFF) && (Vendor != 0) && (Vendor != 0x0001)) {
       break;
     }
     gBS->Stall (10000);
   }
-  Pcie0Log ("endpoint: id=0x%08x after %u polls\r\n", mPcie0Diagnostic.EndpointConfigId, Retry);
   if (Retry == 100) {
-    return Pcie0Finish (Pcie0StageEndpoint, 0, EFI_NO_RESPONSE);
+    return EFI_NO_RESPONSE;
   }
-  if (mPcie0Diagnostic.EndpointConfigId != PCIE0_ENDPOINT_ID) {
-    return Pcie0Finish (Pcie0StageEndpoint, 0, EFI_INCOMPATIBLE_VERSION);
+  if (Value != PCIE0_ENDPOINT_ID) {
+    return EFI_INCOMPATIBLE_VERSION;
   }
-  Pcie0Flush ();
 
-  Step = Pcie0AssignResources ();
-  if (Step != 0) {
-    return Pcie0Finish (Pcie0StageEndpoint, Step, EFI_DEVICE_ERROR);
-  }
-  return Pcie0Finish (Pcie0StageDone, 0, EFI_SUCCESS);
+  return Pcie0AssignResources () == 0 ? EFI_SUCCESS : EFI_DEVICE_ERROR;
 }

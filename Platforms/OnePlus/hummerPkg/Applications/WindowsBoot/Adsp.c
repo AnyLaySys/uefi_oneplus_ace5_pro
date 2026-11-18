@@ -58,6 +58,7 @@ typedef struct {
 STATIC EFI_HANDLE         *mAdspFileSystems;
 STATIC UINTN              mAdspFileSystemCount;
 STATIC QCOM_SCM_PROTOCOL  *mScm;
+STATIC EFI_FILE_PROTOCOL  *mPilPackages[2];
 
 STATIC
 BOOLEAN
@@ -133,8 +134,6 @@ PilReadFile (
   return Status;
 }
 
-// Driver Store names include an OS-generated hash. Select by the INF version,
-// and keep one directory open for both images and all of their segments.
 STATIC
 UINT64
 AdspPackageVersion (
@@ -207,26 +206,33 @@ AdspPackageVersion (
 }
 
 STATIC
-EFI_FILE_PROTOCOL *
-PilFindPackage (
-  IN CONST CHAR16        *Prefix,
-  IN CONST CHAR16        *InfName,
-  IN CONST CHAR16 *CONST *Required,
-  IN UINTN               RequiredCount
+VOID
+PilFindPackages (
+  VOID
   )
 {
+  STATIC CONST CHAR16 *CONST AdspRequired[] = { L"ADSP\\adsp.mdt", L"ADSP\\adsp_dtb.mdt" };
+  STATIC CONST CHAR16 *CONST GpuRequired[] = { L"gen80000_zap.mbn" };
+  STATIC CONST struct {
+    CONST CHAR16 *Prefix, *Inf;
+    CONST CHAR16 *CONST *Required;
+    UINTN Count;
+  } Types[] = {
+    { L"sia9177.inf_arm64_", L"sia9177.inf", AdspRequired, ARRAY_SIZE (AdspRequired) },
+    { L"qcom_gpu.inf_arm64_", L"qcom_gpu.inf", GpuRequired, ARRAY_SIZE (GpuRequired) }
+  };
   EFI_FILE_PROTOCOL *Root;
   EFI_FILE_PROTOCOL *Store;
   EFI_FILE_PROTOCOL *Package;
   EFI_FILE_PROTOCOL *File;
-  EFI_FILE_PROTOCOL *Best = NULL;
   UINT8 Buffer[sizeof (EFI_FILE_INFO) + 512];
   EFI_FILE_INFO *Info = (EFI_FILE_INFO *)Buffer;
   UINTN Size;
   UINTN Index;
+  UINTN Type;
   UINTN Image;
   UINT64 Version;
-  UINT64 BestVersion = 0;
+  UINT64 BestVersion[ARRAY_SIZE (Types)] = { 0 };
 
   for (Index = 0; Index < mAdspFileSystemCount; Index++) {
     if (!AdspOpenRoot (Index, &Root)) {
@@ -242,34 +248,39 @@ PilFindPackage (
       if (EFI_ERROR (Store->Read (Store, &Size, Buffer)) || (Size == 0)) {
         break;
       }
-      if (!(Info->Attribute & EFI_FILE_DIRECTORY) || (StrnCmp (Info->FileName, Prefix, StrLen (Prefix)) != 0) ||
-          EFI_ERROR (Store->Open (Store, &Package, Info->FileName, EFI_FILE_MODE_READ, 0))) {
+      if (!(Info->Attribute & EFI_FILE_DIRECTORY)) {
         continue;
       }
-      Version = AdspPackageVersion (Package, InfName);
-      if (Version > BestVersion) {
-        for (Image = 0; Image < RequiredCount; Image++) {
-          if (EFI_ERROR (Package->Open (Package, &File, (CHAR16 *)Required[Image], EFI_FILE_MODE_READ, 0))) {
-            break;
-          }
-          File->Close (File);
+      for (Type = 0; Type < ARRAY_SIZE (Types); Type++) {
+        if (StrnCmp (Info->FileName, Types[Type].Prefix, StrLen (Types[Type].Prefix)) != 0 ||
+            EFI_ERROR (Store->Open (Store, &Package, Info->FileName, EFI_FILE_MODE_READ, 0))) {
+          continue;
         }
-        if (Image == RequiredCount) {
-          if (Best != NULL) {
-            Best->Close (Best);
+        Version = AdspPackageVersion (Package, Types[Type].Inf);
+        if (Version > BestVersion[Type]) {
+          for (Image = 0; Image < Types[Type].Count; Image++) {
+            if (EFI_ERROR (Package->Open (Package, &File, (CHAR16 *)Types[Type].Required[Image], EFI_FILE_MODE_READ, 0))) {
+              break;
+            }
+            File->Close (File);
           }
-          Best = Package;
-          BestVersion = Version;
-          Package = NULL;
+          if (Image == Types[Type].Count) {
+            if (mPilPackages[Type] != NULL) {
+              mPilPackages[Type]->Close (mPilPackages[Type]);
+            }
+            mPilPackages[Type] = Package;
+            BestVersion[Type] = Version;
+            Package = NULL;
+          }
         }
-      }
-      if (Package != NULL) {
-        Package->Close (Package);
+        if (Package != NULL) {
+          Package->Close (Package);
+        }
+        break;
       }
     }
     Store->Close (Store);
   }
-  return Best;
 }
 
 STATIC
@@ -294,26 +305,36 @@ AdspScm (
 }
 
 STATIC
-VOID
-AdspWriteRegion (
-  IN UINTN        Destination,
-  IN CONST UINT8  *Source,
-  IN UINTN        FileSize,
-  IN UINTN        MemSize
+EFI_STATUS
+PilReadSegment (
+  IN EFI_FILE_PROTOCOL *Directory,
+  IN CONST CHAR16      *Name,
+  IN VOID              *Destination,
+  IN UINTN             Size
   )
 {
-  UINTN   Offset;
-  UINT32  Word;
+  EFI_FILE_PROTOCOL *File;
+  EFI_STATUS Status;
+  UINTN Length = Size;
+  UINT8 Extra;
 
-  for (Offset = 0; Offset < MemSize; Offset += 4) {
-    Word = 0;
-    if (Offset + 4 <= FileSize) {
-      Word = ReadUnaligned32 ((CONST UINT32 *)(Source + Offset));
-    } else if (Offset < FileSize) {
-      CopyMem (&Word, Source + Offset, FileSize - Offset);
-    }
-    MmioWrite32 (Destination + Offset, Word);
+  Status = Directory->Open (Directory, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ, 0);
+  if (EFI_ERROR (Status)) {
+    return Status;
   }
+  Status = File->Read (File, &Length, Destination);
+  if (!EFI_ERROR (Status) && Length != Size) {
+    Status = EFI_COMPROMISED_DATA;
+  }
+  if (!EFI_ERROR (Status)) {
+    Length = 1;
+    Status = File->Read (File, &Length, &Extra);
+    if (!EFI_ERROR (Status) && Length != 0) {
+      Status = EFI_COMPROMISED_DATA;
+    }
+  }
+  File->Close (File);
+  return Status;
 }
 
 STATIC
@@ -333,7 +354,6 @@ PilStartImage (
   UINT8                  *Mdt;
   UINTN                  MdtSize;
   UINT8                  *Segment;
-  UINTN                  SegmentSize;
   CONST ADSP_ELF32_EHDR  *Ehdr;
   CONST ADSP_ELF32_PHDR  *Phdr;
   UINTN                  Index;
@@ -449,29 +469,21 @@ PilStartImage (
     if ((Phdr[Index].Type != ELF_PT_LOAD) || ((Phdr[Index].Flags & MDT_TYPE_MASK) == MDT_TYPE_HASH) || (Phdr[Index].MemSz == 0)) {
       continue;
     }
-    Segment     = NULL;
-    SegmentSize = 0;
+    Segment = (UINT8 *)(MemBase + (UINTN)(Phdr[Index].PAddr - Reloc));
     if (Phdr[Index].FileSz != 0) {
       if (Split) {
         UnicodeSPrint (FileName, sizeof (FileName), L"%s.b%02u", Name, (UINT32)Index);
-        Status = PilReadFile (Directory, FileName, &Segment, &SegmentSize);
-        if (EFI_ERROR (Status) || (SegmentSize != Phdr[Index].FileSz)) {
-          if (Segment != NULL) {
-            FreePool (Segment);
-          }
-          Status = EFI_ERROR (Status) ? Status : EFI_COMPROMISED_DATA;
+        Status = PilReadSegment (Directory, FileName, Segment, Phdr[Index].FileSz);
+        if (EFI_ERROR (Status)) {
           goto done;
         }
       } else {
-        Segment = Mdt + Phdr[Index].Offset;
-        SegmentSize = Phdr[Index].FileSz;
+        CopyMem (Segment, Mdt + Phdr[Index].Offset, Phdr[Index].FileSz);
       }
     }
-    AdspWriteRegion (MemBase + (UINTN)(Phdr[Index].PAddr - Reloc), Segment, SegmentSize, Phdr[Index].MemSz);
-    if (Split && Segment != NULL) {
-      FreePool (Segment);
-    }
+    ZeroMem (Segment + Phdr[Index].FileSz, Phdr[Index].MemSz - Phdr[Index].FileSz);
   }
+  MemoryFence ();
   Status = AdspScm (TZ_PIL_AUTH_RESET_ID, TZ_PIL_AUTH_RESET_ID_PARAM_ID, PasId, 0, 0);
 
 done:
@@ -528,7 +540,6 @@ AdspInitialize (
   EFI_FILE_PROTOCOL     *Package;
   EFI_PHYSICAL_ADDRESS  Metadata[2] = { 0 };
   UINTN                 Pages[2] = { 0 };
-  STATIC CONST CHAR16 *CONST Required[] = { L"ADSP\\adsp.mdt", L"ADSP\\adsp_dtb.mdt" };
 
   mAdspFileSystems     = FileSystems;
   mAdspFileSystemCount = FileSystemCount;
@@ -536,7 +547,9 @@ AdspInitialize (
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  Package = PilFindPackage (L"sia9177.inf_arm64_", L"sia9177.inf", Required, ARRAY_SIZE (Required));
+  PilFindPackages ();
+  Package = mPilPackages[0];
+  mPilPackages[0] = NULL;
   if (Package == NULL) {
     return EFI_NOT_FOUND;
   }
@@ -584,11 +597,11 @@ GpuInitialize (
   EFI_STATUS            Status;
   EFI_STATUS            CloseStatus;
   EFI_FILE_PROTOCOL     *Package;
-  STATIC CONST CHAR16 *CONST Required[] = { L"gen80000_zap.mbn" };
-
+  Package = mPilPackages[1];
+  mPilPackages[1] = NULL;
   Status = gBS->LocateProtocol (&gEfiAcpiSdtProtocolGuid, NULL, (VOID **)&Sdt);
   if (EFI_ERROR (Status)) {
-    return Status;
+    goto done;
   }
   for (Index = 0; !EFI_ERROR (Status = Sdt->GetAcpiTable (Index, &Table, &Version, &Key)); Index++) {
     if (Table->Signature == SIGNATURE_32 ('D', 'S', 'D', 'T')) {
@@ -606,16 +619,16 @@ GpuInitialize (
     if (Type != EFI_ACPI_DATA_TYPE_CHILD || Size != 1 || *(CONST UINT8 *)Data > 1) {
       Status = EFI_COMPROMISED_DATA;
     } else if (*(CONST UINT8 *)Data == 0) {
-      Package = PilFindPackage (L"a830_native.inf_arm64_", L"a830_native.inf", Required, ARRAY_SIZE (Required));
       Status = mScm == NULL ? EFI_NOT_READY : Package == NULL ? EFI_NOT_FOUND :
         PilStartImage (Package, L"gen80000_zap", FALSE, 13, 0x9B09A000, 0x2000, NULL, NULL);
-      if (Package != NULL) {
-        Package->Close (Package);
-      }
       if (!EFI_ERROR (Status)) {
         Status = Sdt->SetOption (Name, 2, &Ready, sizeof (Ready));
       }
     }
+  }
+done:
+  if (Package != NULL) {
+    Package->Close (Package);
   }
   if (Name != NULL) {
     CloseStatus = Sdt->Close (Name);

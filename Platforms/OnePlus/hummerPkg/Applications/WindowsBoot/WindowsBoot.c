@@ -255,7 +255,7 @@ WindowsBootEntry (
     return Status;
   }
 
-  Pcie0Initialize (Handles, Count);
+  Pcie0Initialize ();
   AdspInitialize (Handles, Count);
   GpuInitialize ();
 

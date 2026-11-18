@@ -6,6 +6,7 @@
 
 typedef struct {
   VOID (EFIAPI *Restore)(VOID);
+  EFI_EVENT_NOTIFY Update;
   // Borrowed pixels for the next BGRT update; the consumer clears this pointer.
   CONST EFI_GRAPHICS_OUTPUT_BLT_PIXEL *BltBuffer;
   UINT32 X, Y, Width, Height, Stride;

@@ -36,7 +36,6 @@
   UefiApplicationEntryPoint
   UefiBootManagerLib
   UefiBootServicesTableLib
-  UefiRuntimeServicesTableLib
   UefiLib
   WindowsKernelPatchLib
 
