@@ -13,7 +13,11 @@ The output is `hummer.img`. The firmware keeps Linux, Windows and mass-storage b
 
 ## Windows ADSP firmware and quiet boot
 
-WindowsBoot loads device-matched ADSP firmware from the `ADSP` subdirectory of the newest complete `sia9177.inf_arm64_*` package in Windows DriverStore. Install the complete audio driver package before booting. Both DTB and main-image authentication metadata remain allocated until main-image authentication completes.
+WindowsBoot reads the Windows SYSTEM registry hive to locate the audio and GPU packages registered for the next normal boot. It uses `Select\Default` (or `Select\Current` when Default is absent), then the `ImagePath` values of the `sia9177` and `qcom_gpu` services. Package paths are resolved on the same Windows volume; DriverStore is not enumerated and INF versions are not compared. Install the complete driver packages before booting.
+
+The reader supports modern hive cells and HvLE transactions from `SYSTEM.LOG1` and `SYSTEM.LOG2`. Clean hives are read by cell; dirty hives are recovered in memory after log hash and sequence validation. Windows files are never modified. A damaged hive without usable logs or a missing service path leaves the corresponding firmware unavailable. Registry tests run with `python3 Platforms/OnePlus/hummerPkg/Applications/WindowsBoot/tests/run-registry.py`.
+
+ADSP firmware is loaded from the registered audio package's `ADSP` subdirectory. Both DTB and main-image authentication metadata remain allocated until main-image authentication completes.
 
 The ADSP file logger, empty logging functions, log calls and logging-only counters/labels have been removed. PCIe/network diagnostics are retained, and the RELEASE configuration disables generic debug printing. The Boot Menu footer is `Vol Move`; button handling and the Power/Select hint are unchanged.
 
@@ -26,13 +30,13 @@ cd /home/fuck/linux_oneplus_ace5_pro
 python3 build.py -nr
 ```
 
-The second command packages the already-built UEFI. Running only `build.py -nr` does not compile changed UEFI source. The directory change must be paired with the updated boot image; old images still expect the old firmware location.
+The second command packages the already-built UEFI. Running only `build.py -nr` does not compile changed UEFI source.
 
 WindowsBoot preserves the splash image already displayed by the Android bootloader. SimpleFbDxe saves the framebuffer before registering the console, and WindowsBoot restores that screen before starting the EFI loader and publishes its visible image through BGRT. The screen copy lives in RAM; no splash bitmap is embedded in the firmware. If the incoming framebuffer is black, Windows keeps its default boot logo. The behavior still needs verification on the phone.
 
 ## Windows GPU firmware
 
-The Windows GPU driver package installs the device-matched `gen80000_zap.mbn` through its INF into DriverStore. WindowsBoot selects the newest complete `a830_native.inf_arm64_*` package by INF `DriverVer` and reads ZAP directly from that package. Install the complete GPU package with DISM or PnPUtil before booting this UEFI.
+The Windows GPU driver package installs the device-matched `gen80000_zap.mbn` through its INF into DriverStore. WindowsBoot reads ZAP from the directory containing the `qcom_gpu` service's registered driver binary. Install the complete GPU package with DISM or PnPUtil before booting this UEFI.
 
 WindowsBoot uses the shared PIL loader to authenticate ZAP through PAS 13 in the reserved `0x9B09A000` / `0x2000` region. Only successful authentication enables `ACPI\HMRG0830`; a failed or missing image leaves the GPU node hidden and Windows boot continues. The node delivers the GPU/GMU/GPUCC/SMMU aperture and all GPU, GMU and SMMU interrupts. Repeat Windows boot attempts reuse successful authentication within the same UEFI session.
 

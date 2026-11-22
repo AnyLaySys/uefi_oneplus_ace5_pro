@@ -14,6 +14,7 @@
 #include <Protocol/SimpleFileSystem.h>
 #include <Guid/FileInfo.h>
 #include "Pcie0.h"
+#include "Registry.h"
 
 #define ADSP_PAS_ID            1
 #define ADSP_MEM_BASE          0x9EE00000
@@ -55,231 +56,71 @@ typedef struct {
   UINT32  Align;
 } ADSP_ELF32_PHDR;
 
-STATIC EFI_HANDLE         *mAdspFileSystems;
-STATIC UINTN              mAdspFileSystemCount;
 STATIC QCOM_SCM_PROTOCOL  *mScm;
 STATIC EFI_FILE_PROTOCOL  *mPilPackages[2];
 
 STATIC
 BOOLEAN
 AdspOpenRoot (
-  IN  UINTN              Index,
+  IN  EFI_HANDLE         Handle,
   OUT EFI_FILE_PROTOCOL  **Root
   )
 {
   EFI_SIMPLE_FILE_SYSTEM_PROTOCOL  *FileSystem;
   EFI_DEVICE_PATH_PROTOCOL         *DevicePath;
 
-  DevicePath = DevicePathFromHandle (mAdspFileSystems[Index]);
+  DevicePath = DevicePathFromHandle (Handle);
   return (DevicePath != NULL) && !MsBootPolicyLibIsDevicePathUsb (DevicePath) &&
-         !EFI_ERROR (gBS->HandleProtocol (mAdspFileSystems[Index], &gEfiSimpleFileSystemProtocolGuid, (VOID **)&FileSystem)) &&
+         !EFI_ERROR (gBS->HandleProtocol (Handle, &gEfiSimpleFileSystemProtocolGuid, (VOID **)&FileSystem)) &&
          !EFI_ERROR (FileSystem->OpenVolume (FileSystem, Root));
 }
 
 STATIC
 EFI_STATUS
 PilReadFile (
-  IN  EFI_FILE_PROTOCOL *Directory OPTIONAL,
+  IN  EFI_FILE_PROTOCOL *Directory,
   IN  CONST CHAR16  *Name,
   OUT UINT8         **Data,
   OUT UINTN         *Size
   )
 {
-  EFI_FILE_PROTOCOL  *Root;
-  EFI_FILE_PROTOCOL  *File;
-  EFI_FILE_INFO      *Info;
-  UINTN              InfoSize;
-  UINTN              Index;
-  EFI_STATUS         Status;
+  EFI_FILE_PROTOCOL *File;
+  EFI_FILE_INFO *Info = NULL;
+  UINTN InfoSize = 0;
+  EFI_STATUS Status;
 
-  Status = EFI_NOT_FOUND;
-  for (Index = 0; Index < (Directory == NULL ? mAdspFileSystemCount : 1); Index++) {
-    Root = Directory;
-    if ((Directory == NULL) && !AdspOpenRoot (Index, &Root)) {
-      continue;
-    }
-    Status = Root->Open (Root, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ, 0);
-    if (Directory == NULL) {
-      Root->Close (Root);
-    }
-    if (EFI_ERROR (Status)) {
-      continue;
-    }
-    InfoSize = 0;
-    Info     = NULL;
-    Status   = File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, NULL);
-    if (Status == EFI_BUFFER_TOO_SMALL) {
-      Info   = AllocatePool (InfoSize);
-      Status = (Info == NULL) ? EFI_OUT_OF_RESOURCES : File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, Info);
-    }
-    if (!EFI_ERROR (Status)) {
-      InfoSize = (UINTN)Info->FileSize;
-      *Size = InfoSize;
-      *Data = AllocatePool (MAX (*Size, 1));
-      Status = (*Data == NULL) ? EFI_OUT_OF_RESOURCES : File->Read (File, Size, *Data);
-      if (!EFI_ERROR (Status) && (*Size != InfoSize)) {
-        Status = EFI_COMPROMISED_DATA;
-      }
-      if (EFI_ERROR (Status) && (*Data != NULL)) {
-        FreePool (*Data);
-        *Data = NULL;
-      }
-    }
-    if (Info != NULL) {
-      FreePool (Info);
-    }
-    File->Close (File);
-    return Status;
+  *Data = NULL;
+  Status = Directory->Open (Directory, &File, (CHAR16 *)Name, EFI_FILE_MODE_READ, 0);
+  if (EFI_ERROR (Status)) { return Status; }
+  Status = File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, NULL);
+  if (Status == EFI_BUFFER_TOO_SMALL) {
+    Info = AllocatePool (InfoSize);
+    Status = Info == NULL ? EFI_OUT_OF_RESOURCES : File->GetInfo (File, &gEfiFileInfoGuid, &InfoSize, Info);
   }
+  if (!EFI_ERROR (Status)) {
+    InfoSize = (UINTN)Info->FileSize;
+    *Size = InfoSize;
+    *Data = AllocatePool (MAX (*Size, 1));
+    Status = *Data == NULL ? EFI_OUT_OF_RESOURCES : File->Read (File, Size, *Data);
+    if (!EFI_ERROR (Status) && *Size != InfoSize) { Status = EFI_COMPROMISED_DATA; }
+    if (EFI_ERROR (Status) && *Data != NULL) { FreePool (*Data); *Data = NULL; }
+  }
+  if (Info != NULL) { FreePool (Info); }
+  File->Close (File);
   return Status;
 }
 
-STATIC
-UINT64
-AdspPackageVersion (
-  IN EFI_FILE_PROTOCOL *Package,
-  IN CONST CHAR16      *InfName
-  )
+STATIC VOID
+PilFindPackages (EFI_HANDLE *FileSystems, UINTN Count)
 {
-  UINT8 *Data;
-  UINTN Size;
-  UINTN Offset;
-  UINTN Part;
-  UINT32 Value;
-  UINT64 Version = 0;
-
-  if (EFI_ERROR (PilReadFile (Package, InfName, &Data, &Size))) {
-    return 0;
-  }
-  for (Offset = 0; Offset + 9 < Size; Offset++) {
-    if ((Offset != 0) && (Data[Offset - 1] != '\n')) {
-      continue;
-    }
-    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
-      Offset++;
-    }
-    if ((Offset + 9 >= Size) || (AsciiStrnCmp ((CHAR8 *)Data + Offset, "DriverVer", 9) != 0)) {
-      continue;
-    }
-    Offset += 9;
-    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
-      Offset++;
-    }
-    if ((Offset == Size) || (Data[Offset++] != '=')) {
-      break;
-    }
-    while ((Offset < Size) && (Data[Offset] != ',') && (Data[Offset] != '\n')) {
-      Offset++;
-    }
-    if ((Offset == Size) || (Data[Offset++] != ',')) {
-      break;
-    }
-    while ((Offset < Size) && ((Data[Offset] == ' ') || (Data[Offset] == '\t'))) {
-      Offset++;
-    }
-    for (Part = 0; Part < 4; Part++) {
-      if ((Offset == Size) || (Data[Offset] < '0') || (Data[Offset] > '9')) {
-        Version = 0;
-        break;
-      }
-      Value = 0;
-      while ((Offset < Size) && (Data[Offset] >= '0') && (Data[Offset] <= '9')) {
-        Value = Value * 10 + Data[Offset++] - '0';
-        if (Value > MAX_UINT16) {
-          break;
-        }
-      }
-      if ((Value > MAX_UINT16) || ((Part < 3) && ((Offset == Size) || (Data[Offset++] != '.')))) {
-        Version = 0;
-        break;
-      }
-      Version = (Version << 16) | Value;
-    }
-    if ((Offset < Size) && (Data[Offset] != '\r') && (Data[Offset] != '\n') &&
-        (Data[Offset] != ' ') && (Data[Offset] != '\t')) {
-      Version = 0;
-    }
-    break;
-  }
-  FreePool (Data);
-  return Version;
-}
-
-STATIC
-VOID
-PilFindPackages (
-  VOID
-  )
-{
-  STATIC CONST CHAR16 *CONST AdspRequired[] = { L"ADSP\\adsp.mdt", L"ADSP\\adsp_dtb.mdt" };
-  STATIC CONST CHAR16 *CONST GpuRequired[] = { L"gen80000_zap.mbn" };
-  STATIC CONST struct {
-    CONST CHAR16 *Prefix, *Inf;
-    CONST CHAR16 *CONST *Required;
-    UINTN Count;
-  } Types[] = {
-    { L"sia9177.inf_arm64_", L"sia9177.inf", AdspRequired, ARRAY_SIZE (AdspRequired) },
-    { L"qcom_gpu.inf_arm64_", L"qcom_gpu.inf", GpuRequired, ARRAY_SIZE (GpuRequired) }
-  };
   EFI_FILE_PROTOCOL *Root;
-  EFI_FILE_PROTOCOL *Store;
-  EFI_FILE_PROTOCOL *Package;
-  EFI_FILE_PROTOCOL *File;
-  UINT8 Buffer[sizeof (EFI_FILE_INFO) + 512];
-  EFI_FILE_INFO *Info = (EFI_FILE_INFO *)Buffer;
-  UINTN Size;
-  UINTN Index;
-  UINTN Type;
-  UINTN Image;
-  UINT64 Version;
-  UINT64 BestVersion[ARRAY_SIZE (Types)] = { 0 };
+  EFI_STATUS Status;
 
-  for (Index = 0; Index < mAdspFileSystemCount; Index++) {
-    if (!AdspOpenRoot (Index, &Root)) {
-      continue;
-    }
-    if (EFI_ERROR (Root->Open (Root, &Store, L"\\Windows\\System32\\DriverStore\\FileRepository", EFI_FILE_MODE_READ, 0))) {
-      Root->Close (Root);
-      continue;
-    }
+  for (UINTN Index = 0; Index < Count; Index++) {
+    if (!AdspOpenRoot (FileSystems[Index], &Root)) { continue; }
+    Status = RegistryOpenPackages (Root, mPilPackages);
     Root->Close (Root);
-    for (;;) {
-      Size = sizeof (Buffer);
-      if (EFI_ERROR (Store->Read (Store, &Size, Buffer)) || (Size == 0)) {
-        break;
-      }
-      if (!(Info->Attribute & EFI_FILE_DIRECTORY)) {
-        continue;
-      }
-      for (Type = 0; Type < ARRAY_SIZE (Types); Type++) {
-        if (StrnCmp (Info->FileName, Types[Type].Prefix, StrLen (Types[Type].Prefix)) != 0 ||
-            EFI_ERROR (Store->Open (Store, &Package, Info->FileName, EFI_FILE_MODE_READ, 0))) {
-          continue;
-        }
-        Version = AdspPackageVersion (Package, Types[Type].Inf);
-        if (Version > BestVersion[Type]) {
-          for (Image = 0; Image < Types[Type].Count; Image++) {
-            if (EFI_ERROR (Package->Open (Package, &File, (CHAR16 *)Types[Type].Required[Image], EFI_FILE_MODE_READ, 0))) {
-              break;
-            }
-            File->Close (File);
-          }
-          if (Image == Types[Type].Count) {
-            if (mPilPackages[Type] != NULL) {
-              mPilPackages[Type]->Close (mPilPackages[Type]);
-            }
-            mPilPackages[Type] = Package;
-            BestVersion[Type] = Version;
-            Package = NULL;
-          }
-        }
-        if (Package != NULL) {
-          Package->Close (Package);
-        }
-        break;
-      }
-    }
-    Store->Close (Store);
+    if (!EFI_ERROR (Status)) { break; }
   }
 }
 
@@ -541,13 +382,11 @@ AdspInitialize (
   EFI_PHYSICAL_ADDRESS  Metadata[2] = { 0 };
   UINTN                 Pages[2] = { 0 };
 
-  mAdspFileSystems     = FileSystems;
-  mAdspFileSystemCount = FileSystemCount;
   Status = gBS->LocateProtocol (&gQcomScmProtocolGuid, NULL, (VOID **)&mScm);
   if (EFI_ERROR (Status)) {
     return Status;
   }
-  PilFindPackages ();
+  PilFindPackages (FileSystems, FileSystemCount);
   Package = mPilPackages[0];
   mPilPackages[0] = NULL;
   if (Package == NULL) {

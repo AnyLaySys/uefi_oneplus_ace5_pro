@@ -4,8 +4,10 @@
 #include <Library/BaseLib.h>
 #include <Library/BaseMemoryLib.h>
 #include <Library/DevicePathLib.h>
+#include <Library/DebugLib.h>
 #include <Library/FdtLib.h>
 #include <Library/HobLib.h>
+#include <Library/IoLib.h>
 #include <Library/MemoryAllocationLib.h>
 #include <Library/MsBootPolicyLib.h>
 #include <Library/UefiApplicationEntryPoint.h>
@@ -24,6 +26,7 @@
 
 STATIC EFI_GUID mPayloadGuid = HUMMER_LINUX_PAYLOAD_HOB_GUID;
 VOID HummerUpdateCpuSmbios (EFI_HANDLE ImageHandle);
+EFI_STATUS HummerCameraDmaInitialize (VOID);
 
 STATIC
 EFI_STATUS
@@ -66,6 +69,8 @@ TryBootFile (
   if (!EFI_ERROR (Status)) {
     Status = InstallWindowsKernelPatch ();
     if (!EFI_ERROR (Status)) {
+      EFI_STATUS CameraStatus = HummerCameraDmaInitialize ();
+      DEBUG ((DEBUG_INFO, "Camera DMA initialization: %r\n", CameraStatus));
       HummerUpdateCpuSmbios (ImageHandle);
       if (!EFI_ERROR (gBS->LocateProtocol (&gPreservedBootLogoProtocolGuid, NULL, (VOID **)&Logo))) {
         Logo->Restore ();
@@ -256,6 +261,18 @@ WindowsBootEntry (
   }
 
   Pcie0Initialize ();
+  MmioWrite32 (0x0F135004, 0);
+  MmioWrite32 (0x0F135000, 0x200);
+  {
+    CONST CHAR8 *Names[] = { "ldob1", "ldob9" };
+    CONST UINT32 Voltages[] = { 1800, 3056 };
+    CONST UINT32 Offsets[] = { 0, 8, 4 };
+    for (UINTN Rail = 0; Rail < ARRAY_SIZE (Names); Rail++) {
+      UINT32 Address = CmdDbAddress (Names[Rail]);
+      UINT32 Values[] = { Voltages[Rail], 7, 1 };
+      if (Address != 0) { RpmhWrite (Address, ARRAY_SIZE (Values), Offsets, Values); }
+    }
+  }
   AdspInitialize (Handles, Count);
   GpuInitialize ();
 

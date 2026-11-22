@@ -4,6 +4,15 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
 {
     Scope (\_SB)
     {
+        OperationRegion (QCLK, SystemMemory, 0x00152008, 4)
+        Field (QCLK, DWordAcc, NoLock, Preserve) { QVEN, 32 }
+        Method (VOTE, 2, Serialized)
+        {
+            If (Arg1) { QVEN |= Arg0 }
+            Else { QVEN &= ~Arg0 }
+            Return (Zero)
+        }
+
         Device (CPU0) { Name (_HID, "ACPI0007") Name (_UID, 0) }
         Device (CPU1) { Name (_HID, "ACPI0007") Name (_UID, 1) }
         Device (CPU2) { Name (_HID, "ACPI0007") Name (_UID, 2) }
@@ -13,6 +22,26 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
         Device (CPU6) { Name (_HID, "ACPI0007") Name (_UID, 6) }
         Device (CPU7) { Name (_HID, "ACPI0007") Name (_UID, 7) }
 
+        Device (CAM0)
+        {
+            Name (_HID, "HMRC0906")
+            Name (CQST, 0xFF)
+            Method (QSST, 0, NotSerialized) { Return (CQST) }
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x0ADE0000, 0x00020000)
+                Memory32Fixed (ReadWrite, 0x01760000, 0x00006000)
+                Memory32Fixed (ReadWrite, 0x0AC7B000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x0ADB3000, 0x00002000)
+                Memory32Fixed (ReadWrite, 0x0AD27000, 0x00003000)
+                Memory32Fixed (ReadWrite, 0x0AC86000, 0x00010000)
+                Memory32Fixed (ReadWrite, 0x0AC04000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x0AD90000, 0x00009000)
+            })
+        }
+
         Device (KEYS)
         {
             Name (_HID, "HMRK0001")
@@ -21,13 +50,27 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             Name (_S0W, 0)
             Name (_CRS, ResourceTemplate ()
             {
-                Memory32Fixed (ReadWrite, 0x0C400000, 0x00003000)
-                Memory32Fixed (ReadWrite, 0x0C42D000, 0x00004000)
-                Memory32Fixed (ReadWrite, 0x0C440000, 0x00080000)
-                Memory32Fixed (ReadWrite, 0x0C500000, 0x00400000)
-                Memory32Fixed (ReadWrite, 0x0B220000, 0x00010000)
-                Interrupt (ResourceConsumer, Level, ActiveHigh, ExclusiveAndWake) { 778 }
+                Memory32Fixed (ReadWrite, 0x0F150000, 0x00002000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, SharedAndWake) { 778 }
             })
+            OperationRegion (KPDC, SystemMemory, 0x0B220000, 0x1004)
+            Field (KPDC, DWordAcc, NoLock, Preserve)
+            {
+                Offset (0x10), KBEN, 32,
+                Offset (0x114), KCFG, 32,
+                Offset (0x1000), KVER, 32
+            }
+            Method (_PS0, 0, Serialized)
+            {
+                KCFG = (KCFG & 0xFFFFFFF8) | 4
+                If ((KVER & 0xFFFFFF00) >= 0x30200) { KCFG |= 8 }
+                Else { KBEN |= 2 }
+            }
+            Method (_PS3, 0, Serialized)
+            {
+                If ((KVER & 0xFFFFFF00) >= 0x30200) { KCFG &= 0xFFFFFFF7 }
+                Else { KBEN &= 0xFFFFFFFD }
+            }
         }
 
         Device (WLN0)
@@ -46,23 +89,6 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
                     173
                 }
             })
-
-            Name (_DSD, Package ()
-            {
-                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
-                Package ()
-                {
-                    Package () { "pci-id", 0x110E17CB },
-                    Package () { "msi-vectors", 32 },
-                    Package () { "gpio-wlan-en", 16 },
-                    Package () { "gpio-perst", 102 }
-                }
-            })
-
-            Method (_STA, 0, NotSerialized)
-            {
-                Return (0x0F)
-            }
         }
 
         Device (UFS0)
@@ -86,24 +112,6 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             }
         }
 
-        Device (QUP4)
-        {
-            Name (_HID, "QCOMA900")
-            Name (_UID, 4)
-            Name (_CCA, 1)
-            Name (_CRS, ResourceTemplate ()
-            {
-                Memory32Fixed (ReadWrite, 0x00A90000, 0x00004000)
-                Memory32Fixed (ReadWrite, 0x00A00000, 0x00060000)
-                Memory32Fixed (ReadWrite, 0x00118000, 0x00001000)
-                Memory32Fixed (ReadWrite, 0x00152000, 0x00001000)
-                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive)
-                {
-                    389
-                }
-            })
-        }
-
         Device (TPD0)
         {
             Name (_HID, "SYNA3910")
@@ -112,49 +120,9 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             Name (_CRS, ResourceTemplate ()
             {
                 Memory32Fixed (ReadWrite, 0x00A90000, 0x00004000)
-                Memory32Fixed (ReadWrite, 0x00A00000, 0x00060000)
-                Memory32Fixed (ReadWrite, 0x0F100000, 0x00102000)
-                Memory32Fixed (ReadWrite, 0x00100000, 0x001F4200)
-                Memory32Fixed (ReadWrite, 0x16520000, 0x00010000)
-                Memory32Fixed (ReadWrite, 0x81C60000, 0x00020000)
-                Memory32Fixed (ReadWrite, 0x15000000, 0x00001000)
-                Memory32Fixed (ReadWrite, 0x00160000, 0x00010000)
-                Memory32Fixed (ReadWrite, 0x00160800, 0x00200000)
+                Memory32Fixed (ReadWrite, 0x00A14000, 0x00004000)
             })
-
-            Name (_DSD, Package ()
-            {
-                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
-                Package ()
-                {
-                    Package () { "panel-width", 1264 },
-                    Package () { "panel-height", 2780 },
-                    Package () { "panel-max-x", 12639 },
-                    Package () { "panel-max-y", 27799 },
-                    Package () { "max-contacts", 10 },
-                    Package () { "spi-frequency", 19000000 },
-                    Package () { "spi-cpol", 0 },
-                    Package () { "spi-cpha", 0 },
-                    Package () { "serial-engine-id", 4 },
-                    Package () { "gpi-instance-mask", 0x1E },
-                    Package () { "gpio-spi-miso", 48 },
-                    Package () { "gpio-spi-mosi", 49 },
-                    Package () { "gpio-spi-clk", 50 },
-                    Package () { "gpio-spi-cs", 51 },
-                    Package () { "gpio-reset", 161 },
-                    Package () { "gpio-irq", 162 },
-                    Package () { "interrupt-spi", 357 },
-                    Package () { "vddio-vrm", 0x40800 },
-                    Package () { "vddio-mv", 1800 },
-                    Package () { "avdd-vrm", 0x41900 },
-                    Package () { "avdd-mv", 3104 }
-                }
-            })
-
-            Method (_STA, 0, NotSerialized)
-            {
-                Return (0x0F)
-            }
+            Method (QVOT, 1, NotSerialized) { Return (\_SB.VOTE (Arg0, One)) }
         }
 
         Device (SPK0)
@@ -166,10 +134,128 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             {
                 Memory32Fixed (ReadWrite, 0x00990000, 0x00004000)
             })
+            Method (QVOT, 1, NotSerialized) { Return (\_SB.VOTE (Arg0, One)) }
+        }
 
-            Method (_STA, 0, NotSerialized)
+        Device (IR0)
+        {
+            Name (_HID, "HMRI0001")
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_CRS, ResourceTemplate ()
             {
-                Return (0x0F)
+                Memory32Fixed (ReadWrite, 0x00A94000, 0x00004000)
+                Memory32Fixed (ReadWrite, 0x0F135000, 0x00001000)
+                Memory32Fixed (ReadWrite, 0x00A18000, 0x00004000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 313 }
+            })
+            OperationRegion (RCLK, SystemMemory, 0x00118508, 0x28)
+            Field (RCLK, DWordAcc, NoLock, Preserve)
+            {
+                RHST, 32,
+                Offset (0x10), RCMD, 32, RCFG, 32,
+                Offset (0x24), RDFS, 32
+            }
+            Method (_PS0, 0, Serialized)
+            {
+                RDFS &= 0xFFFFFFFE
+                \_SB.VOTE (0x083C0000, One)
+                RCFG = 0x00100001
+                RCMD |= One
+                Local0 = 100
+                While ((RCMD & One) && Local0) { Sleep (One) Local0-- }
+                Local0 = 100
+                While ((RHST & 0x80000000) && Local0) { Sleep (One) Local0-- }
+            }
+            Method (_PS3, 0, Serialized) { \_SB.VOTE (0x08000000, Zero) }
+        }
+
+        Device (NFC0)
+        {
+            Name (_HID, "NXP0220")
+            Name (_UID, 0)
+            Name (_CCA, 0)
+            Name (_CRS, ResourceTemplate ()
+            {
+                Memory32Fixed (ReadWrite, 0x00A80000, 0x00004000)
+                Interrupt (ResourceConsumer, Level, ActiveHigh, Exclusive) { 657 }
+            })
+            OperationRegion (GCC0, SystemMemory, 0x00118004, 0x18)
+            Field (GCC0, DWordAcc, NoLock, Preserve)
+            {
+                GHST, 32,
+                Offset (0x10), GCMD, 32, GCFG, 32
+            }
+            OperationRegion (GPIO, SystemMemory, 0x0F120000, 0x3008)
+            Field (GPIO, DWordAcc, NoLock, Preserve)
+            {
+                SDAC, 32,
+                Offset (0x1000), SCLC, 32,
+                Offset (0x2000), VENC, 32, VENO, 32,
+                Offset (0x3000), CLKC, 32
+            }
+            OperationRegion (GIRQ, SystemMemory, 0x0F14B000, 0x0C)
+            Field (GIRQ, DWordAcc, NoLock, Preserve)
+            {
+                IRQC, 32,
+                Offset (8), IRQE, 32
+            }
+            OperationRegion (PDC0, SystemMemory, 0x0B220000, 0x1004)
+            Field (PDC0, DWordAcc, NoLock, Preserve)
+            {
+                Offset (0x1C), PBEN, 32,
+                Offset (0x2D8), PCFG, 32,
+                Offset (0x1000), PVER, 32
+            }
+            Method (_PS0, 0, Serialized)
+            {
+                \_SB.VOTE (0x00700000, One)
+                GCFG = 0x00100001
+                GCMD |= One
+                Local0 = 100
+                While ((GCMD & One) && Local0)
+                {
+                    Sleep (One)
+                    Local0--
+                }
+                Local0 = 100
+                While ((GHST & 0x80000000) && Local0)
+                {
+                    Sleep (One)
+                    Local0--
+                }
+                SDAC = (SDAC & 0xFFFFDC00) | 0x3007
+                SCLC = (SCLC & 0xFFFFDC00) | 0x3007
+                CLKC &= 0xFFFFDC00
+                IRQC = (IRQC & 0xFFFFDC00) | One
+                VENO = Zero
+                VENC = (VENC & 0xFFFFDC00) | 0x200
+                Sleep (10)
+                VENO = 2
+                Sleep (10)
+                IRQE = (IRQE & 0xFFFFFFFE) | 0x80
+                PCFG = (PCFG & 0xFFFFFFF8) | 4
+                If ((PVER & 0xFFFFFF00) >= 0x30200)
+                {
+                    PCFG |= 8
+                }
+                Else
+                {
+                    PBEN |= 0x00040000
+                }
+            }
+            Method (_PS3, 0, Serialized)
+            {
+                If ((PVER & 0xFFFFFF00) >= 0x30200)
+                {
+                    PCFG &= 0xFFFFFFF7
+                }
+                Else
+                {
+                    PBEN &= 0xFFFBFFFF
+                }
+                VENO = Zero
+                \_SB.VOTE (0x00400000, Zero)
             }
         }
 
@@ -186,10 +272,6 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
                     493
                 }
             })
-            Method (_STA, 0, NotSerialized)
-            {
-                Return (0x0F)
-            }
         }
 
         Device (USB0)
@@ -247,40 +329,6 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
                 GPU_IRQ (706)
                 GPU_IRQ (710)
                 GPU_IRQ (711)
-                GPU_IRQ (712)
-                GPU_IRQ (713)
-                GPU_IRQ (714)
-                GPU_IRQ (715)
-                GPU_IRQ (716)
-                GPU_IRQ (717)
-                GPU_IRQ (718)
-                GPU_IRQ (719)
-                GPU_IRQ (720)
-                GPU_IRQ (454)
-                GPU_IRQ (508)
-                GPU_IRQ (606)
-                GPU_IRQ (607)
-                GPU_IRQ (608)
-                GPU_IRQ (609)
-                GPU_IRQ (692)
-                GPU_IRQ (694)
-                GPU_IRQ (697)
-                GPU_IRQ (698)
-                GPU_IRQ (699)
-                GPU_IRQ (701)
-                GPU_IRQ (702)
-                GPU_IRQ (732)
-            })
-            Name (_DSD, Package ()
-            {
-                ToUUID ("daffd814-6eba-4d8c-8a91-bc9bbf4aa301"),
-                Package ()
-                {
-                    Package () { "chip-id", 0x44050001 },
-                    Package () { "zap-base", 0x9B09A000 },
-                    Package () { "zap-size", 0x2000 },
-                    Package () { "pas-id", 13 }
-                }
             })
             Method (_STA, 0, NotSerialized)
             {
@@ -295,13 +343,8 @@ DefinitionBlock ("", "DSDT", 2, "ONEPLS", "HUMMER  ", 2)
             Name (_CCA, 0)
             Name (_CRS, ResourceTemplate ()
             {
-                Memory32Fixed (ReadWrite, 0x00984000, 0x00004000)
+                Memory32Fixed (ReadWrite, 0x0F142000, 0x00002000)
             })
-
-            Method (_STA, 0, NotSerialized)
-            {
-                Return (0x0F)
-            }
         }
     }
 }

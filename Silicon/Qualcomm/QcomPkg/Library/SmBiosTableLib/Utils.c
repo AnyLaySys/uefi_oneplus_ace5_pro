@@ -187,7 +187,7 @@ ConvertManufacturerId (IN UINT8 Id)
   // Set Manufacturer Names
   STATIC CONST SMBIOS_MANUFACTURER_NAME SmBiosManufacturerNames[] =  {
     {1,   "Samsung"},
-    {6,   "Hynix"},
+    {6,   "SK hynix"},
     {255, "Micron"}
   };
 

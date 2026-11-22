@@ -12,6 +12,9 @@
   Pcie0.c
   Pcie0.h
   Adsp.c
+  Registry.c
+  Registry.h
+  CameraDma.c
 
 [Packages]
   MdePkg/MdePkg.dec
@@ -28,6 +31,7 @@
   IoLib
   DevicePathLib
   DxeServicesTableLib
+  DebugLib
   FdtLib
   HobLib
   MemoryAllocationLib
